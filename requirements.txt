@@ -1,0 +1,2 @@
+pydantic
+python3-dtls

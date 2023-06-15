@@ -2,20 +2,20 @@ import asyncio
 import random
 import inspect
 import signal
+from inspect import signature
 from mercury_sync.connection.tcp.mercury_sync_tcp_connection import MercurySyncTCPConnection
 from mercury_sync.connection.udp.mercury_sync_udp_connection import MercurySyncUDPConnection
 from mercury_sync.models.message import Message
 from typing import (
     Tuple, 
     Dict, 
-    TypeVar, 
-    Generic,
-    AsyncIterable
+    AsyncIterable,
+    Type,
+    Any,
+    Optional,
+    get_args
 )
 
-
-T = TypeVar('T', bound=Message)
-R = TypeVar('R', bound=Message)
 
 
 def handle_loop_stop(signame, tcp_connection: MercurySyncTCPConnection):
@@ -29,7 +29,7 @@ def handle_loop_stop(signame, tcp_connection: MercurySyncTCPConnection):
             pass
 
 
-class Service(Generic[T, R]):
+class Service:
     
     def __init__(
         self,
@@ -38,6 +38,7 @@ class Service(Generic[T, R]):
     ) -> None:
         self.name = self.__class__.__name__
         self._instance_id = random.randint(0, 2**16)
+        self._response_parsers: Dict[str, Message] = {}
 
 
         self._udp_connection = MercurySyncUDPConnection(
@@ -60,9 +61,9 @@ class Service(Generic[T, R]):
             'start',
             'connect',
             'send',
-            'send_tc',
+            'send_tcp',
             'stream',
-            'stream_tcp'
+            'stream_tcp',
             'close'
         ]
 
@@ -72,10 +73,42 @@ class Service(Generic[T, R]):
             not_internal = method_name.startswith('__') is False
             not_reserved = method_name not in reserved_methods
             is_server = hasattr(method, 'server_only')
+            is_client = hasattr(method, 'client_only')
+
+            rpc_signature = signature(method)
 
             if not_internal and not_reserved and is_server:
-                self._tcp_connection.events[method.__name__] = method
-                self._udp_connection.events[method.__name__] = method
+
+                
+                for param_type in rpc_signature.parameters.values():
+                    if param_type.annotation in Message.__subclasses__():
+
+                        model = param_type.annotation
+
+                        self._tcp_connection.parsers[method_name] = model
+                        self._udp_connection.parsers[method_name] = model
+  
+                self._tcp_connection.events[method_name] = method
+                self._udp_connection.events[method_name] = method
+
+            elif not_internal and not_reserved and is_client:
+
+                is_stream = inspect.isasyncgenfunction(method)
+
+                if is_stream:
+
+                    response_type = rpc_signature.return_annotation
+                    args = get_args(response_type)
+                    response_model = args[0]
+
+                    self._response_parsers[method.target] = response_model
+
+                else:
+
+                    response_model = rpc_signature.return_annotation
+                    self._response_parsers[method.target] = response_model
+
+
 
         self._loop = asyncio.get_event_loop()
 
@@ -88,61 +121,81 @@ class Service(Generic[T, R]):
                 )
             )
 
-    def start(self):
-        self._tcp_connection.connect()
-        self._udp_connection.connect()
+    def start(
+        self,
+        cert_path: Optional[str]=None,
+        key_path: Optional[str]=None
+    ):
+        self._tcp_connection.connect(
+            cert_path=cert_path,
+            key_path=key_path
+        )
+        self._udp_connection.connect(cert_path=cert_path)
 
     async def connect(
         self,
-        remote: T
+        remote: Message,
+        cert_path: Optional[str]=None,
+        key_path: Optional[str]=None
     ):
         address = (remote.host, remote.port)
         self._host_map[remote.__class__.__name__] = address
 
-        await self._tcp_connection.connect_client((
-            remote.host, 
-            remote.port + 1
-        ))
+        await self._tcp_connection.connect_client(
+            (remote.host, remote.port + 1),
+            cert_path=cert_path,
+            key_path=key_path
+        )
 
     async def send(
         self, 
         event_name: str,
-        message: T
-    ) -> R:
+        message: Message
+    ):
         (host, port)  = self._host_map.get(message.__class__.__name__)
         address = (
             host,
             port
         )
 
-        return await self._udp_connection.send(
+        shard_id, data = await self._udp_connection.send(
             event_name,
             message.to_data(),
             address
         )
+
+        response_data = self._response_parsers.get(event_name)(
+            **data
+        )
+        return shard_id, response_data
     
     async def send_tcp(
         self,
         event_name: str,
-        message: T
-    ) -> R:
+        message: Message
+    ):
         (host, port)  = self._host_map.get(message.__class__.__name__)
         address = (
             host,
             port + 1
         )
 
-        return await self._tcp_connection.send(
+        shard_id, data = await self._tcp_connection.send(
             event_name,
             message.to_data(),
             address
         )
+
+        response_data = self._response_parsers.get(event_name)(
+            **data
+        )
+        return shard_id, response_data
     
     async def stream(
         self,
         event_name: str,
-        message: T
-    ) -> AsyncIterable[R]:
+        message: Message
+    ):
         (host, port)  = self._host_map.get(message.__class__.__name__)
         address = (
             host,
@@ -154,13 +207,18 @@ class Service(Generic[T, R]):
             message.to_data(),
             address
         ):
-            yield response
+            shard_id, data = response
+            response_data = self._response_parsers.get(event_name)(
+                **data
+            )
+
+            yield shard_id, response_data
 
     async def stream_tcp(
         self,
         event_name: str,
-        message: T
-    ) -> AsyncIterable[R]:
+        message: Message
+    ):
         (host, port)  = self._host_map.get(message.__class__.__name__)
         address = (
             host,
@@ -172,7 +230,12 @@ class Service(Generic[T, R]):
             message.to_data(),
             address
         ):
-            yield response
+            shard_id, data = response
+            response_data = self._response_parsers.get(event_name)(
+                **data
+            )
+
+            yield shard_id, response_data
     
     async def close(self):
         self._tcp_connection.close()

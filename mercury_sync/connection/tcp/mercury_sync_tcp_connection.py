@@ -2,11 +2,21 @@
 import asyncio
 import pickle
 import socket
+import ssl
 import zlib
 from collections import deque, defaultdict
 from mercury_sync.snowflake.snowflake_generator import SnowflakeGenerator
 from mercury_sync.models.message import Message
-from typing import Tuple, Deque, Any, Dict, Coroutine, AsyncIterable
+from typing import (
+    Tuple, 
+    Deque, 
+    Any, 
+    Dict, 
+    Coroutine, 
+    AsyncIterable,
+    Union,
+    Optional
+)
 from mercury_sync.connection.tcp.protocols import (
     MercurySyncTCPClientProtocol,
     MercurySyncTCPServerProtocol
@@ -36,14 +46,34 @@ class MercurySyncTCPConnection:
         self._server: asyncio.Server = None
         self._loop = asyncio.get_event_loop()
         self.queue: Dict[str, Deque[Tuple[str, int, float, Any]] ] = defaultdict(deque)
+        self.parsers: Dict[str, Message] = {}
         self._waiters: Dict[str, Deque[asyncio.Future]] = defaultdict(deque)
         self._pending_responses: Dict[str, Deque[asyncio.Task]] = defaultdict(deque)
+
         self._sent_values = deque()
         self.connected = False
         self._server_socket = None
         self._stream = False
+        
+        self._client_key_path: Union[str, None] = None
+        self._client_cert_path: Union[str, None] = None
+
+        self._server_key_path: Union[str, None] = None
+        self._server_cert_path: Union[str, None] = None 
+        
+        self._client_ssl_context: Union[ssl.SSLContext, None] = None
+        self._server_ssl_context: Union[ssl.SSLContext, None] = None
     
-    def connect(self):
+    def connect(
+        self,
+        cert_path: Optional[str]=None,
+        key_path: Optional[str]=None
+    ):
+        if cert_path and key_path:
+            self._server_ssl_context = self._create_server_ssl_context(
+                cert_path=cert_path,
+                key_path=key_path
+            ) 
 
         if self.connected is False:
 
@@ -57,18 +87,51 @@ class MercurySyncTCPConnection:
                 lambda: MercurySyncTCPServerProtocol(
                     self.read
                 ),
-                sock= self._server_socket
+                sock=self._server_socket,
+                ssl=self._server_ssl_context
             )
 
-            
             self._server = self._loop.run_until_complete(server)
 
             self.connected = True
 
+    def _create_server_ssl_context(
+        self, 
+        cert_path: Optional[str]=None,
+        key_path: Optional[str]=None
+    ) -> ssl.SSLContext:
+        
+        if self._server_cert_path is None:
+            self._server_cert_path = cert_path
+
+        if self._server_key_path is None:
+            self._server_key_path = key_path
+
+        ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ssl_ctx.options |= ssl.OP_NO_TLSv1
+        ssl_ctx.options |= ssl.OP_NO_TLSv1_1
+        ssl_ctx.options |= ssl.OP_SINGLE_DH_USE
+        ssl_ctx.options |= ssl.OP_SINGLE_ECDH_USE
+        ssl_ctx.load_cert_chain(cert_path, keyfile=key_path)
+        ssl_ctx.load_verify_locations(cafile=cert_path)
+        ssl_ctx.check_hostname = False
+        ssl_ctx.verify_mode = ssl.VerifyMode.CERT_REQUIRED
+        ssl_ctx.set_ciphers('ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384')
+
+        return ssl_ctx
+
     async def connect_client(
         self,
-        address: Tuple[str, int]
+        address: Tuple[str, int],
+        cert_path: Optional[str]=None,
+        key_path: Optional[str]=None
     ):
+        
+        if cert_path and key_path:
+            self._client_ssl_context = self._create_client_ssl_context(
+                cert_path=cert_path,
+                key_path=key_path
+            ) 
 
         host, port = address
         tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -82,13 +145,36 @@ class MercurySyncTCPConnection:
                 self.read
             ),
             host=host,
-            port=port
+            port=port,
+            ssl=self._client_ssl_context
         )
 
         self._client_transports[address] = client_transport
 
         return client_transport
+    
+    def _create_client_ssl_context(
+        self, 
+        cert_path: Optional[str]=None,
+        key_path: Optional[str]=None
+    ) -> ssl.SSLContext:
+        
+        if self._client_cert_path is None:
+            self._client_cert_path = cert_path
 
+        if self._client_key_path is None:
+            self._client_key_path = key_path
+
+        ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ssl_ctx.options |= ssl.OP_NO_TLSv1
+        ssl_ctx.options |= ssl.OP_NO_TLSv1_1
+        ssl_ctx.load_cert_chain(cert_path, keyfile=key_path)
+        ssl_ctx.load_verify_locations(cafile=cert_path)
+        ssl_ctx.check_hostname = False
+        ssl_ctx.verify_mode = ssl.VerifyMode.CERT_REQUIRED
+        ssl_ctx.set_ciphers('ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384')
+
+        return ssl_ctx
 
     async def send(
         self, 
@@ -249,7 +335,7 @@ class MercurySyncTCPConnection:
                         event_name,
                         self.events.get(event_name)(
                             shard_id,
-                            payload
+                            self.parsers[event_name](**payload)
                         ),
                         transport
                     )
@@ -299,7 +385,7 @@ class MercurySyncTCPConnection:
                         event_name,
                         self.events.get(event_name)(
                             shard_id,
-                            payload
+                            self.parsers[event_name](**payload)
                         ),
                         transport
                     )

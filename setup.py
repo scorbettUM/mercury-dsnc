@@ -39,5 +39,9 @@ setup(
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent"
     ],
+    install_requires=[
+        'pydantic',
+        'python3-dtls'
+    ],
     python_requires='>=3.10'
 )

@@ -14,6 +14,7 @@ def stream(
     def wraps(func):
 
         func.client_only = True
+        func.target = call_name
 
         @functools.wraps(func)
         async def decorator(

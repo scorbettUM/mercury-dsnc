@@ -1,13 +1,26 @@
 
 import asyncio
 import pickle
-import time
+import socket
+import ssl
 import zlib
 from collections import deque, defaultdict
+from dtls import do_patch
 from mercury_sync.connection.udp.protocols import MercurySyncUDPProtocol
 from mercury_sync.models.message import Message
 from mercury_sync.snowflake.snowflake_generator import SnowflakeGenerator
-from typing import Tuple, Deque, Any, Dict, Coroutine, AsyncIterable
+from typing import (
+    Tuple, 
+    Deque, 
+    Any, 
+    Dict, 
+    Coroutine, 
+    AsyncIterable,
+    Optional,
+    Union
+)
+
+do_patch()
 
 
 class MercurySyncUDPConnection:
@@ -32,25 +45,74 @@ class MercurySyncUDPConnection:
         self._transport: asyncio.DatagramTransport = None
         self._loop = asyncio.get_event_loop()
         self.queue: Dict[str, Deque[Tuple[str, int, float, Any]] ] = defaultdict(deque)
+        self.parsers: Dict[str, Message] = {}
         self._waiters: Dict[str, Deque[asyncio.Future]] = defaultdict(deque)
         self._pending_requests = deque()
         self._pending_responses = deque()
 
-    def connect(self):
+        self._udp_cert_path: Union[str, None] = None
+        self._udp_key_path: Union[str, None] = None
+        self._udp_ssl_context: Union[ssl.SSLContext, None] = None
+
+    def connect(
+        self, 
+        cert_path: Optional[str]=None,
+        key_path: Optional[str]=None
+    ):
+
+        udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+        if cert_path and key_path:
+            self._udp_ssl_context = self._create_udp_ssl_context(
+                cert_path=cert_path,
+                key_path=key_path,
+            )
+
+            udp_socket = self._udp_ssl_context.wrap_socket(udp_socket)
+
+        udp_socket.bind((
+            self.host,
+            self.port
+        ))
+
+        udp_socket.setblocking(False)
+
         server = self._loop.create_datagram_endpoint(
             lambda: MercurySyncUDPProtocol(
                 self.read
             ),
-            local_addr=(
-                self.host,
-                self.port
-            )
+            sock=udp_socket
         )
-        
 
         transport, _ = self._loop.run_until_complete(server)
         self._transport = transport
 
+    def _create_udp_ssl_context(
+        self,
+        cert_path: Optional[str]=None,
+        key_path: Optional[str]=None
+    ) -> ssl.SSLContext: 
+        
+        if self._udp_cert_path is None:
+            self._udp_cert_path = cert_path
+
+        if self._udp_key_path is None:
+            self._udp_key_path = key_path
+
+        ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS)
+        ssl_ctx.options |= ssl.OP_NO_TLSv1
+        ssl_ctx.options |= ssl.OP_NO_TLSv1_1
+        ssl_ctx.options |= ssl.OP_SINGLE_DH_USE
+        ssl_ctx.options |= ssl.OP_SINGLE_ECDH_USE
+        ssl_ctx.load_cert_chain(cert_path, keyfile=key_path)
+        ssl_ctx.load_verify_locations(cafile=cert_path)
+        ssl_ctx.check_hostname = False
+        ssl_ctx.verify_mode = ssl.VerifyMode.CERT_REQUIRED
+        ssl_ctx.set_ciphers('ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384')
+        
+        return ssl_ctx
+    
     async def send(
         self, 
         event_name: str,
@@ -151,7 +213,7 @@ class MercurySyncUDPConnection:
                         event_name,
                         self.events.get(event_name)(
                             shard_id,
-                            payload
+                            self.parsers[event_name](**payload)
                         ),
                         addr
                     )
@@ -165,7 +227,7 @@ class MercurySyncUDPConnection:
                         event_name,
                         self.events.get(event_name)(
                             shard_id,
-                            payload
+                            self.parsers[event_name](**payload)
                         ),
                         addr
                     )
