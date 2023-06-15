@@ -19,9 +19,7 @@ class MercurySyncTCPClientProtocol(asyncio.Protocol):
         self.on_con_lost = self.loop.create_future()
 
     def connection_made(self, transport: asyncio.Transport) -> str:
-
-        if self.transport is None:
-            self.transport = transport
+        self.transport = transport
 
     def data_received(self, data: bytes):
         self.callback(

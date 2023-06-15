@@ -21,7 +21,6 @@ class MercurySyncUDPProtocol(asyncio.DatagramProtocol):
 
     def datagram_received(self, data: bytes, addr: Tuple[str, int]) -> None:
         # Here is where you would push message to whatever methods/classes you want.
-        
         # data: Message = pickle.loads(lzma.decompress(unpacked))
         self.callback(
             data,

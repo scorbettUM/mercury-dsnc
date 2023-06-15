@@ -15,6 +15,7 @@ class MercurySyncTCPServerProtocol(asyncio.Protocol):
     ):
         super().__init__()
         self.callback = callback
+        self.transport: asyncio.Transport = None
 
     def connection_made(self, transport) -> str:
         self.transport = transport

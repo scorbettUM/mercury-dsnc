@@ -1,12 +1,16 @@
+from __future__ import annotations
+from pydantic import BaseModel, StrictStr, StrictInt
 from typing import Optional
 
+class Message(BaseModel):
+    host: Optional[StrictStr]
+    port: Optional[StrictInt]
 
-class Message:
+    def to_data(self):
+        return self.dict(
+            exclude={
+                'host',
+                'port'
+            }
+        )
     
-    def __init__(
-        self,
-        name: str,
-        data: Optional[bytes]=None
-    ) -> None:
-        self.name = name
-        self.data = data

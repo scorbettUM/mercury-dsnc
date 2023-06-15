@@ -5,8 +5,9 @@ import time
 import zlib
 from collections import deque, defaultdict
 from mercury_sync.connection.udp.protocols import MercurySyncUDPProtocol
+from mercury_sync.models.message import Message
 from mercury_sync.snowflake.snowflake_generator import SnowflakeGenerator
-from typing import Tuple, Deque, Any, Dict, Coroutine
+from typing import Tuple, Deque, Any, Dict, Coroutine, AsyncIterable
 
 
 class MercurySyncUDPConnection:
@@ -35,12 +36,26 @@ class MercurySyncUDPConnection:
         self._pending_requests = deque()
         self._pending_responses = deque()
 
+    def connect(self):
+        server = self._loop.create_datagram_endpoint(
+            lambda: MercurySyncUDPProtocol(
+                self.read
+            ),
+            local_addr=(
+                self.host,
+                self.port
+            )
+        )
+
+        transport, _ = self._loop.run_until_complete(server)
+        self._transport = transport
+
     async def send(
         self, 
-        event_name: bytes,
-        data: bytes, 
+        event_name: str,
+        data: Any, 
         addr: Tuple[str, int]
-    ) -> str:
+    ) -> Tuple[int, Any]:
 
         item = pickle.dumps((
             'request',
@@ -58,29 +73,65 @@ class MercurySyncUDPConnection:
 
         await waiter
 
-        return self.queue[event_name].pop()
-   
+        (
+            _,
+            shard_id,
+            _,
+            response_data,
+            _, 
+            _
+        ) = self.queue[event_name].pop()
 
-    def connect(self):
-        server = self._loop.create_datagram_endpoint(
-            lambda: MercurySyncUDPProtocol(
-                self.read
-            ),
-            local_addr=(
-                self.host,
-                self.port
-            )
+        return (
+            shard_id,
+            response_data
         )
 
-        transport, _ = self._loop.run_until_complete(server)
-        self._transport = transport
+    async def stream(
+        self, 
+        event_name: str,
+        data: Any, 
+        addr: Tuple[str, int]
+    ): 
+
+        item = pickle.dumps((
+            'stream',
+            next(self.id_generator),
+            event_name,
+            data
+        ))
+
+        compressed = zlib.compress(item)
+        
+        self._transport.sendto(compressed, addr)
+
+        waiter = self._loop.create_future()
+        self._waiters[event_name].append(waiter)
+
+        await waiter
+
+        for item in self.queue[event_name]:
+            (
+                _,
+                shard_id,
+                _,
+                response_data,
+                _, 
+                _
+            ) = item
+
+            yield(
+                shard_id,
+                response_data
+            )
+
+        self.queue.clear()
 
     def read(
         self,
         data: bytes, 
         addr: Tuple[str, int]
     ):
-
         result: Tuple[str, int, float, Any] = pickle.loads(zlib.decompress(data))
         (
             message_type, 
@@ -91,10 +142,25 @@ class MercurySyncUDPConnection:
 
         incoming_host, incoming_port = addr
 
+
         if message_type == 'request':
             self._pending_responses.append(
                 asyncio.create_task(
                     self._read(
+                        event_name,
+                        self.events.get(event_name)(
+                            shard_id,
+                            payload
+                        ),
+                        addr
+                    )
+                )
+            )
+            
+        elif message_type == 'stream':
+            self._pending_responses.append(
+                asyncio.create_task(
+                    self._read_iterator(
                         event_name,
                         self.events.get(event_name)(
                             shard_id,
@@ -115,13 +181,14 @@ class MercurySyncUDPConnection:
                 incoming_host,
                 incoming_port
             ))
-  
-        event_waiter = self._waiters[event_name]
+
+            event_waiter = self._waiters[event_name]
 
 
-        if len(event_waiter) > 0:
-            waiter = event_waiter.pop()
-            waiter.set_result(None)
+            if len(event_waiter) > 0:
+                waiter = event_waiter.pop()
+                waiter.set_result(None)
+
 
     async def _read(
         self,
@@ -129,70 +196,37 @@ class MercurySyncUDPConnection:
         coroutine: Coroutine,
         addr: Tuple[str, int]
     ):
-        response = await coroutine
+        response: Message = await coroutine
 
         item = pickle.dumps(
             (
                 'response', 
                 next(self.id_generator),
                 event_name,
-                response
+                response.to_data()
             )
         )
 
         compressed = zlib.compress(item)
         self._transport.sendto(compressed, addr)
 
+    async def _read_iterator(
+        self,
+        event_name: str,
+        coroutine: AsyncIterable[Message],
+        addr: Tuple[str, int]    
+    ):
+        async for response in coroutine:
 
-async def run(client: MercurySyncUDPConnection):
-    response = await client.send(
-        'test',
-        'Hello world!',
-        (
-            '0.0.0.0',
-            1123
-        )
-    )
+            item = pickle.dumps(
+                (
+                    'response', 
+                    next(self.id_generator),
+                    event_name,
+                    response.to_data()
+                )
+            )
 
-    print(response)
+            compressed = zlib.compress(item)
 
-async def example_response(
-    shard_id: int,
-    payload     
-): 
-    return 'Alright!'
-
-
-async def example_response_two(
-    shard_id: int,
-    payload     
-): 
-    return 'Okay!'
-
-
-
-if __name__ == '__main__':
-    loop = asyncio.get_event_loop()
-    server = MercurySyncUDPConnection(
-        host='0.0.0.0',
-        port=1123,
-        instance_id=1
-    )
-
-    server.events['test'] = example_response
-
-    server.connect()
-
-
-    client = MercurySyncUDPConnection(
-        host='0.0.0.0',
-        port=1124,
-        instance_id=2
-    )
-
-    client.events['test'] = example_response_two
-
-    client.connect()
-
-    loop.run_until_complete(run(client))
-    
+            self._transport.sendto(compressed, addr)
