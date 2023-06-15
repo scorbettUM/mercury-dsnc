@@ -3,11 +3,12 @@
 
 import functools
 from mercury_sync.service import Service
+from mercury_sync.models.message import Message
 
 
 def stream(
     call_name: str, 
-    direct: bool=False
+    as_tcp: bool=False
 ):
 
     def wraps(func):
@@ -21,9 +22,10 @@ def stream(
         ):
             connection: Service = args[0]
 
-            if direct:
+            if as_tcp:
+
                 async for data in func(*args, **kwargs):
-                    async for response in connection.stream_direct(
+                    async for response in connection.stream_tcp(
                         call_name,
                         data
                     ):

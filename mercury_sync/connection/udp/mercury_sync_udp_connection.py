@@ -46,6 +46,7 @@ class MercurySyncUDPConnection:
                 self.port
             )
         )
+        
 
         transport, _ = self._loop.run_until_complete(server)
         self._transport = transport

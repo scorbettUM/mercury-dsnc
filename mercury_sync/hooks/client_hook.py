@@ -4,7 +4,7 @@ from mercury_sync.service import Service
 
 def client(
     call_name: str, 
-    direct: bool=False
+    as_tcp: bool=False
 ):
 
     def wraps(func):
@@ -18,8 +18,8 @@ def client(
         ):
             connection: Service = args[0]
 
-            if direct:
-                return await connection.send_direct(
+            if as_tcp:
+                return await connection.send_tcp(
                     call_name,
                     await func(*args, **kwargs)
                 )

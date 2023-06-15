@@ -1,5 +1,7 @@
+import asyncio
 import random
 import inspect
+import signal
 from mercury_sync.connection.tcp.mercury_sync_tcp_connection import MercurySyncTCPConnection
 from mercury_sync.connection.udp.mercury_sync_udp_connection import MercurySyncUDPConnection
 from mercury_sync.models.message import Message
@@ -14,6 +16,17 @@ from typing import (
 
 T = TypeVar('T', bound=Message)
 R = TypeVar('R', bound=Message)
+
+
+def handle_loop_stop(signame, tcp_connection: MercurySyncTCPConnection):
+        try:
+            tcp_connection.close()
+
+        except BrokenPipeError:
+            pass 
+
+        except RuntimeError:
+            pass
 
 
 class Service(Generic[T, R]):
@@ -47,7 +60,9 @@ class Service(Generic[T, R]):
             'start',
             'connect',
             'send',
-            'send_direct',
+            'send_tc',
+            'stream',
+            'stream_tcp'
             'close'
         ]
 
@@ -61,6 +76,17 @@ class Service(Generic[T, R]):
             if not_internal and not_reserved and is_server:
                 self._tcp_connection.events[method.__name__] = method
                 self._udp_connection.events[method.__name__] = method
+
+        self._loop = asyncio.get_event_loop()
+
+        for signame in ('SIGINT', 'SIGTERM'):
+            self._loop.add_signal_handler(
+                getattr(signal, signame),
+                lambda signame=signame: handle_loop_stop(
+                    signame,
+                    self._tcp_connection
+                )
+            )
 
     def start(self):
         self._tcp_connection.connect()
@@ -95,7 +121,7 @@ class Service(Generic[T, R]):
             address
         )
     
-    async def send_direct(
+    async def send_tcp(
         self,
         event_name: str,
         message: T
@@ -130,7 +156,7 @@ class Service(Generic[T, R]):
         ):
             yield response
 
-    async def stream_direct(
+    async def stream_tcp(
         self,
         event_name: str,
         message: T
@@ -149,4 +175,4 @@ class Service(Generic[T, R]):
             yield response
     
     async def close(self):
-        await self._tcp_connection.close()
+        self._tcp_connection.close()
