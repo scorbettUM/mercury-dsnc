@@ -1,6 +1,5 @@
 import asyncio
-from collections import deque
-from typing import Callable, Tuple, Deque
+from typing import Callable, Tuple
 
 
 class MercurySyncTCPServerProtocol(asyncio.Protocol):
@@ -17,17 +16,12 @@ class MercurySyncTCPServerProtocol(asyncio.Protocol):
         super().__init__()
         self.callback = callback
         self.transport: asyncio.Transport = None
-        self._pending_responses: Deque[asyncio.Task] = deque()
 
     def connection_made(self, transport) -> str:
         self.transport = transport
 
     def data_received(self, data: bytes):
-        self._pending_responses.append(
-            asyncio.create_task(
-                self.callback(
-                    data,
-                    self.transport
-                )
-            )
+        self.callback(
+            data,
+            self.transport
         )

@@ -317,7 +317,7 @@ class MercurySyncTCPConnection:
 
         self.queue.clear()
 
-    async def read(
+    def read(
         self,
         data: bytes,
         transport: asyncio.Transport
