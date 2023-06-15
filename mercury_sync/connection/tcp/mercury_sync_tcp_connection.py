@@ -1,12 +1,15 @@
 
 import asyncio
+import base64
 import pickle
 import socket
 import ssl
 import zlib
 from collections import deque, defaultdict
-from mercury_sync.snowflake.snowflake_generator import SnowflakeGenerator
+from cryptography.fernet import Fernet
+from mercury_sync.env import Env
 from mercury_sync.models.message import Message
+from mercury_sync.snowflake.snowflake_generator import SnowflakeGenerator
 from typing import (
     Tuple, 
     Deque, 
@@ -29,10 +32,12 @@ class MercurySyncTCPConnection:
         self,
         host: str,
         port: int,
-        instance_id: int
+        instance_id: int,
+        env: Env
     ) -> None:
 
         self.id_generator = SnowflakeGenerator(instance_id)
+        self.env = env
 
         self.host = host
         self.port = port
@@ -63,12 +68,19 @@ class MercurySyncTCPConnection:
         
         self._client_ssl_context: Union[ssl.SSLContext, None] = None
         self._server_ssl_context: Union[ssl.SSLContext, None] = None
-    
+        
+        fernet_key = base64.urlsafe_b64encode(
+            env.MERURY_SYNC_AUTH_SECRET.encode().ljust(32)[:32]
+        )
+
+        self._encrypter = Fernet(fernet_key)
+
     def connect(
         self,
         cert_path: Optional[str]=None,
         key_path: Optional[str]=None
     ):
+
         if cert_path and key_path:
             self._server_ssl_context = self._create_server_ssl_context(
                 cert_path=cert_path,
@@ -194,7 +206,9 @@ class MercurySyncTCPConnection:
             self.port
         ))
 
-        compressed = zlib.compress(item)
+        encrypted_message = self._encrypter.encrypt(item)
+
+        compressed = zlib.compress(encrypted_message)
 
         client_transport.write(compressed)
 
@@ -249,7 +263,8 @@ class MercurySyncTCPConnection:
                 self.port
             ))
 
-        compressed = zlib.compress(item)
+        encrypted_message = self._encrypter.encrypt(item)
+        compressed = zlib.compress(encrypted_message)
 
         client_transport.write(compressed)
 
@@ -302,12 +317,15 @@ class MercurySyncTCPConnection:
 
         self.queue.clear()
 
-    def read(
+    async def read(
         self,
         data: bytes,
         transport: asyncio.Transport
     ):
-    
+        decrypted = self._encrypter.decrypt(
+            zlib.decompress(data)
+        )
+
         result: Tuple[
             str, 
             int, 
@@ -315,9 +333,7 @@ class MercurySyncTCPConnection:
             Any, 
             str, 
             int
-        ] = pickle.loads(
-            zlib.decompress(data)
-        )
+        ] = pickle.loads(decrypted)
 
         (
             message_type, 
@@ -435,7 +451,8 @@ class MercurySyncTCPConnection:
             )
         )
 
-        compressed = zlib.compress(item)
+        encrypted_message = self._encrypter.encrypt(item)
+        compressed = zlib.compress(encrypted_message)
 
         transport.write(compressed)
 
@@ -478,10 +495,11 @@ class MercurySyncTCPConnection:
             )
         )
 
-        compressed = zlib.compress(item)
+        encrypted_message = self._encrypter.encrypt(item)
+        compressed = zlib.compress(encrypted_message)
+
         transport.write(compressed)
         
-
     def close(self):
         self._stream = False
 

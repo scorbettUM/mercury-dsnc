@@ -5,17 +5,14 @@ import signal
 from inspect import signature
 from mercury_sync.connection.tcp.mercury_sync_tcp_connection import MercurySyncTCPConnection
 from mercury_sync.connection.udp.mercury_sync_udp_connection import MercurySyncUDPConnection
+from mercury_sync.env import load_env, Env
 from mercury_sync.models.message import Message
 from typing import (
     Tuple, 
     Dict, 
-    AsyncIterable,
-    Type,
-    Any,
     Optional,
     get_args
 )
-
 
 
 def handle_loop_stop(signame, tcp_connection: MercurySyncTCPConnection):
@@ -40,17 +37,19 @@ class Service:
         self._instance_id = random.randint(0, 2**16)
         self._response_parsers: Dict[str, Message] = {}
 
-
+        env = load_env(Env.types_map())
         self._udp_connection = MercurySyncUDPConnection(
             host,
             port,
-            self._instance_id
+            self._instance_id,
+            env
         )
 
         self._tcp_connection = MercurySyncTCPConnection(
             host,
             port + 1,
-            self._instance_id
+            self._instance_id,
+            env
         )
 
         self._host_map: Dict[str, Tuple[str, int]] = {}    
@@ -239,3 +238,4 @@ class Service:
     
     async def close(self):
         self._tcp_connection.close()
+        self._udp_connection.close()

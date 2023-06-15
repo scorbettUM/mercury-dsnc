@@ -1,12 +1,15 @@
 
 import asyncio
+import base64
 import pickle
 import socket
 import ssl
 import zlib
 from collections import deque, defaultdict
+from cryptography.fernet import Fernet
 from dtls import do_patch
 from mercury_sync.connection.udp.protocols import MercurySyncUDPProtocol
+from mercury_sync.env import Env
 from mercury_sync.models.message import Message
 from mercury_sync.snowflake.snowflake_generator import SnowflakeGenerator
 from typing import (
@@ -29,10 +32,12 @@ class MercurySyncUDPConnection:
         self,
         host: str,
         port: int,
-        instance_id: int
+        instance_id: int,
+        env: Env
     ) -> None:
 
         self.id_generator = SnowflakeGenerator(instance_id)
+        self.env = env
 
         self.host = host
         self.port = port
@@ -53,6 +58,12 @@ class MercurySyncUDPConnection:
         self._udp_cert_path: Union[str, None] = None
         self._udp_key_path: Union[str, None] = None
         self._udp_ssl_context: Union[ssl.SSLContext, None] = None
+
+        fernet_key = base64.urlsafe_b64encode(
+            env.MERURY_SYNC_AUTH_SECRET.encode().ljust(32)[:32]
+        )
+
+        self._encrypter = Fernet(fernet_key)
 
     def connect(
         self, 
@@ -127,7 +138,8 @@ class MercurySyncUDPConnection:
             data
         ))
 
-        compressed = zlib.compress(item)
+        encrypted_message = self._encrypter.encrypt(item)
+        compressed = zlib.compress(encrypted_message)
         
         self._transport.sendto(compressed, addr)
 
@@ -164,7 +176,8 @@ class MercurySyncUDPConnection:
             data
         ))
 
-        compressed = zlib.compress(item)
+        encrypted_message = self._encrypter.encrypt(item)
+        compressed = zlib.compress(encrypted_message)
         
         self._transport.sendto(compressed, addr)
 
@@ -195,7 +208,20 @@ class MercurySyncUDPConnection:
         data: bytes, 
         addr: Tuple[str, int]
     ):
-        result: Tuple[str, int, float, Any] = pickle.loads(zlib.decompress(data))
+        
+        decrypted = self._encrypter.decrypt(
+            zlib.decompress(data)
+        )
+
+        result: Tuple[
+            str, 
+            int, 
+            float, 
+            Any, 
+            str, 
+            int
+        ] = pickle.loads(decrypted)
+
         (
             message_type, 
             shard_id, 
@@ -270,7 +296,9 @@ class MercurySyncUDPConnection:
             )
         )
 
-        compressed = zlib.compress(item)
+        encrypted_message = self._encrypter.encrypt(item)
+        compressed = zlib.compress(encrypted_message)
+
         self._transport.sendto(compressed, addr)
 
     async def _read_iterator(
@@ -290,6 +318,10 @@ class MercurySyncUDPConnection:
                 )
             )
 
-            compressed = zlib.compress(item)
+            encrypted_message = self._encrypter.encrypt(item)
+            compressed = zlib.compress(encrypted_message)
 
             self._transport.sendto(compressed, addr)
+
+    def close(self):
+        pass

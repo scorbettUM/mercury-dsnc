@@ -1,5 +1,6 @@
 import asyncio
-from typing import Callable, Tuple
+from collections import deque
+from typing import Callable, Tuple, Deque
 
 
 class MercurySyncUDPProtocol(asyncio.DatagramProtocol):

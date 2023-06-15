@@ -1,5 +1,6 @@
 import asyncio
-from typing import Callable, Any
+from collections import deque
+from typing import Callable, Any, Deque
 
 
 class MercurySyncTCPClientProtocol(asyncio.Protocol):
@@ -13,7 +14,7 @@ class MercurySyncTCPClientProtocol(asyncio.Protocol):
         super().__init__()
         self.transport: asyncio.Transport = None
         self.loop = asyncio.get_event_loop()
-
+        self._pending_responses: Deque[asyncio.Task] = deque()
         self.callback = callback
 
         self.on_con_lost = self.loop.create_future()
@@ -22,9 +23,13 @@ class MercurySyncTCPClientProtocol(asyncio.Protocol):
         self.transport = transport
 
     def data_received(self, data: bytes):
-        self.callback(
-            data,
-            self.transport
+        self._pending_responses.append(
+            asyncio.create_task(
+                self.callback(
+                    data,
+                    self.transport
+                )
+            )
         )
 
     def connection_lost(self, exc):
