@@ -1,14 +1,13 @@
 
 import asyncio
-import base64
 import pickle
 import socket
 import ssl
 import zlib
 from collections import deque, defaultdict
-from cryptography.fernet import Fernet
 from dtls import do_patch
 from mercury_sync.connection.udp.protocols import MercurySyncUDPProtocol
+from mercury_sync.encryption import AESGCMFernet
 from mercury_sync.env import Env
 from mercury_sync.models.message import Message
 from mercury_sync.snowflake.snowflake_generator import SnowflakeGenerator
@@ -59,11 +58,8 @@ class MercurySyncUDPConnection:
         self._udp_key_path: Union[str, None] = None
         self._udp_ssl_context: Union[ssl.SSLContext, None] = None
 
-        fernet_key = base64.urlsafe_b64encode(
-            env.MERURY_SYNC_AUTH_SECRET.encode().ljust(32)[:32]
-        )
-
-        self._encrypter = Fernet(fernet_key)
+        self._encryptor = AESGCMFernet(env)
+        self._semaphore = asyncio.Semaphore(env.MERCURY_SYNC_MAX_CONCURRENCY)
 
     def connect(
         self, 
@@ -138,7 +134,7 @@ class MercurySyncUDPConnection:
             data
         ))
 
-        encrypted_message = self._encrypter.encrypt(item)
+        encrypted_message = self._encryptor.encrypt(item)
         compressed = zlib.compress(encrypted_message)
         
         self._transport.sendto(compressed, addr)
@@ -176,7 +172,7 @@ class MercurySyncUDPConnection:
             data
         ))
 
-        encrypted_message = self._encrypter.encrypt(item)
+        encrypted_message = self._encryptor.encrypt(item)
         compressed = zlib.compress(encrypted_message)
         
         self._transport.sendto(compressed, addr)
@@ -209,7 +205,7 @@ class MercurySyncUDPConnection:
         addr: Tuple[str, int]
     ):
         
-        decrypted = self._encrypter.decrypt(
+        decrypted = self._encryptor.decrypt(
             zlib.decompress(data)
         )
 
@@ -296,7 +292,7 @@ class MercurySyncUDPConnection:
             )
         )
 
-        encrypted_message = self._encrypter.encrypt(item)
+        encrypted_message = self._encryptor.encrypt(item)
         compressed = zlib.compress(encrypted_message)
 
         self._transport.sendto(compressed, addr)
@@ -318,7 +314,7 @@ class MercurySyncUDPConnection:
                 )
             )
 
-            encrypted_message = self._encrypter.encrypt(item)
+            encrypted_message = self._encryptor.encrypt(item)
             compressed = zlib.compress(encrypted_message)
 
             self._transport.sendto(compressed, addr)

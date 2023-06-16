@@ -6,7 +6,7 @@ import socket
 import ssl
 import zlib
 from collections import deque, defaultdict
-from cryptography.fernet import Fernet
+from mercury_sync.encryption import AESGCMFernet
 from mercury_sync.env import Env
 from mercury_sync.models.message import Message
 from mercury_sync.snowflake.snowflake_generator import SnowflakeGenerator
@@ -69,11 +69,8 @@ class MercurySyncTCPConnection:
         self._client_ssl_context: Union[ssl.SSLContext, None] = None
         self._server_ssl_context: Union[ssl.SSLContext, None] = None
         
-        fernet_key = base64.urlsafe_b64encode(
-            env.MERURY_SYNC_AUTH_SECRET.encode().ljust(32)[:32]
-        )
-
-        self._encrypter = Fernet(fernet_key)
+        self._encryptor = AESGCMFernet(env)
+        self._semaphore = asyncio.Semaphore(env.MERCURY_SYNC_MAX_CONCURRENCY)
 
     def connect(
         self,
@@ -195,56 +192,11 @@ class MercurySyncTCPConnection:
         address: Tuple[str, int]
     ) -> str:
         
-        client_transport = self._client_transports.get(address)
+        async with self._semaphore:
+            client_transport = self._client_transports.get(address)
 
-        item = pickle.dumps((
-            'request',
-            next(self.id_generator),
-            event_name,
-            data,
-            self.host,
-            self.port
-        ))
-
-        encrypted_message = self._encrypter.encrypt(item)
-
-        compressed = zlib.compress(encrypted_message)
-
-        client_transport.write(compressed)
-
-        waiter = self._loop.create_future()
-        self._waiters[event_name].append(waiter)
-
-        await waiter
-
-        (
-            _,
-            shard_id,
-            _,
-            response_data,
-            _, 
-            _
-        ) = self.queue[event_name].pop()
-
-        return (
-            shard_id,
-            response_data
-        )
-    
-    async def stream(
-        self, 
-        event_name: str,
-        data: Any, 
-        address: Tuple[str, int]
-    ): 
-        
-
-        client_transport = self._client_transports.get(address)
-
-
-        if self._stream is False:
             item = pickle.dumps((
-                'stream_connect',
+                'request',
                 next(self.id_generator),
                 event_name,
                 data,
@@ -252,43 +204,8 @@ class MercurySyncTCPConnection:
                 self.port
             ))
 
-
-        else:
-            item = pickle.dumps((
-                'stream',
-                next(self.id_generator),
-                event_name,
-                data,
-                self.host,
-                self.port
-            ))
-
-        encrypted_message = self._encrypter.encrypt(item)
-        compressed = zlib.compress(encrypted_message)
-
-        client_transport.write(compressed)
-
-        waiter = self._loop.create_future()
-        self._waiters[event_name].append(waiter)
-
-        await waiter
-
-        if self._stream is False:
-
-            self.queue[event_name].pop()
-
-            self._stream = True
-
-            item = pickle.dumps((
-                'stream',
-                next(self.id_generator),
-                event_name,
-                data,
-                self.host,
-                self.port
-            ))
-
-            compressed = zlib.compress(item)
+            encrypted_message = self._encryptor.encrypt(item)
+            compressed = zlib.compress(encrypted_message)
 
             client_transport.write(compressed)
 
@@ -296,9 +213,6 @@ class MercurySyncTCPConnection:
             self._waiters[event_name].append(waiter)
 
             await waiter
-
-
-        while len(self.queue[event_name]) > 0 and self._stream:
 
             (
                 _,
@@ -308,11 +222,95 @@ class MercurySyncTCPConnection:
                 _, 
                 _
             ) = self.queue[event_name].pop()
-        
-            yield(
+
+            return (
                 shard_id,
                 response_data
             )
+    
+    async def stream(
+        self, 
+        event_name: str,
+        data: Any, 
+        address: Tuple[str, int]
+    ): 
+        
+        async with self._semaphore:
+            client_transport = self._client_transports.get(address)
+
+
+            if self._stream is False:
+                item = pickle.dumps((
+                    'stream_connect',
+                    next(self.id_generator),
+                    event_name,
+                    data,
+                    self.host,
+                    self.port
+                ))
+
+
+            else:
+                item = pickle.dumps((
+                    'stream',
+                    next(self.id_generator),
+                    event_name,
+                    data,
+                    self.host,
+                    self.port
+                ))
+
+            encrypted_message = self._encryptor.encrypt(item)
+            compressed = zlib.compress(encrypted_message)
+
+            client_transport.write(compressed)
+
+            waiter = self._loop.create_future()
+            self._waiters[event_name].append(waiter)
+
+            await waiter
+
+            if self._stream is False:
+
+                self.queue[event_name].pop()
+
+                self._stream = True
+
+                item = pickle.dumps((
+                    'stream',
+                    next(self.id_generator),
+                    event_name,
+                    data,
+                    self.host,
+                    self.port
+                ))
+
+                encrypted_message = self._encryptor.encrypt(item)
+                compressed = zlib.compress(encrypted_message)
+
+                client_transport.write(compressed)
+
+                waiter = self._loop.create_future()
+                self._waiters[event_name].append(waiter)
+
+                await waiter
+
+
+            while len(self.queue[event_name]) > 0 and self._stream:
+
+                (
+                    _,
+                    shard_id,
+                    _,
+                    response_data,
+                    _, 
+                    _
+                ) = self.queue[event_name].pop()
+            
+                yield(
+                    shard_id,
+                    response_data
+                )
 
 
         self.queue.clear()
@@ -322,7 +320,7 @@ class MercurySyncTCPConnection:
         data: bytes,
         transport: asyncio.Transport
     ):
-        decrypted = self._encrypter.decrypt(
+        decrypted = self._encryptor.decrypt(
             zlib.decompress(data)
         )
 
@@ -451,7 +449,7 @@ class MercurySyncTCPConnection:
             )
         )
 
-        encrypted_message = self._encrypter.encrypt(item)
+        encrypted_message = self._encryptor.encrypt(item)
         compressed = zlib.compress(encrypted_message)
 
         transport.write(compressed)
@@ -475,7 +473,9 @@ class MercurySyncTCPConnection:
                 )
             )
 
-            compressed = zlib.compress(item)
+            encrypted_message = self._encryptor.encrypt(item)
+            compressed = zlib.compress(encrypted_message)
+
             transport.write(compressed)
 
     async def _initialize_stream(
@@ -495,7 +495,7 @@ class MercurySyncTCPConnection:
             )
         )
 
-        encrypted_message = self._encrypter.encrypt(item)
+        encrypted_message = self._encryptor.encrypt(item)
         compressed = zlib.compress(encrypted_message)
 
         transport.write(compressed)
