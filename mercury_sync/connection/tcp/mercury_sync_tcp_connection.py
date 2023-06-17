@@ -7,6 +7,7 @@ import zstandard
 from collections import deque, defaultdict
 from mercury_sync.encryption import AESGCMFernet
 from mercury_sync.env import Env
+from mercury_sync.env.time_parser import TimeParser
 from mercury_sync.models.message import Message
 from mercury_sync.snowflake.snowflake_generator import SnowflakeGenerator
 from typing import (
@@ -52,7 +53,7 @@ class MercurySyncTCPConnection:
         self.queue: Dict[str, Deque[Tuple[str, int, float, Any]] ] = defaultdict(deque)
         self.parsers: Dict[str, Message] = {}
         self._waiters: Dict[str, Deque[asyncio.Future]] = defaultdict(deque)
-        self._pending_responses: Dict[str, Deque[asyncio.Task]] = defaultdict(deque)
+        self._pending_responses: Deque[asyncio.Task]= deque()
         self._pending_exceptions: Deque[asyncio.Task] = deque()
         self._last_call: Deque[str] = deque()
 
@@ -73,13 +74,19 @@ class MercurySyncTCPConnection:
         self._encryptor = AESGCMFernet(env)
         self._semaphore = asyncio.Semaphore(env.MERCURY_SYNC_MAX_CONCURRENCY)
         self._compressor = zstandard.ZstdCompressor()
+
         self._decompressor = zstandard.ZstdDecompressor()
+        self._running = False
+        self._cleanup_task: Union[asyncio.Task, None] = None
+        self._cleanup_interval = TimeParser(env.MERCURY_SYNC_CLEANUP_INTERVAL).time
 
     def connect(
         self,
         cert_path: Optional[str]=None,
         key_path: Optional[str]=None
     ):
+
+        self._running = True
 
         if cert_path and key_path:
             self._server_ssl_context = self._create_server_ssl_context(
@@ -106,6 +113,8 @@ class MercurySyncTCPConnection:
             self._server = self._loop.run_until_complete(server)
 
             self.connected = True
+
+            self._cleanup_task = self._loop.create_task(self._cleanup())
 
     def _create_server_ssl_context(
         self, 
@@ -187,6 +196,14 @@ class MercurySyncTCPConnection:
         ssl_ctx.set_ciphers('ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384')
 
         return ssl_ctx
+    
+    async def _cleanup(self):
+        while self._running:
+            await asyncio.sleep(self._cleanup_interval)
+
+            for pending in list(self._pending_responses):
+                if pending.done() or pending.cancelled():
+                    self._pending_responses.pop()
 
     async def send(
         self, 
@@ -385,7 +402,7 @@ class MercurySyncTCPConnection:
         ) = result
 
         if message_type == 'request':
-            self._pending_responses[event_name].append(
+            self._pending_responses.append(
                 asyncio.create_task(
                     self._read(
                         event_name,
@@ -409,7 +426,7 @@ class MercurySyncTCPConnection:
                 incoming_port
             ))
 
-            self._pending_responses[event_name].append(
+            self._pending_responses.append(
                 asyncio.create_task(
                     self._initialize_stream(
                         event_name,
@@ -435,7 +452,7 @@ class MercurySyncTCPConnection:
                 incoming_port
             ))
 
-            self._pending_responses[event_name].append(
+            self._pending_responses.append(
                 asyncio.create_task(
                     self._read_iterator(
                         event_name,
@@ -576,7 +593,9 @@ class MercurySyncTCPConnection:
 
         transport.write(compressed)
         
-    def close(self) -> None:
+    async def close(self) -> None:
         self._stream = False
+        self._running = False
+        await self._cleanup_task
 
         

@@ -248,5 +248,5 @@ class Service:
             yield shard_id, response_data
     
     async def close(self) -> None:
-        self._tcp_connection.close()
-        self._udp_connection.close()
+        await self._tcp_connection.close()
+        await self._udp_connection.close()

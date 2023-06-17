@@ -9,6 +9,7 @@ from dtls import do_patch
 from mercury_sync.connection.udp.protocols import MercurySyncUDPProtocol
 from mercury_sync.encryption import AESGCMFernet
 from mercury_sync.env import Env
+from mercury_sync.env.time_parser import TimeParser
 from mercury_sync.models.message import Message
 from mercury_sync.snowflake.snowflake_generator import SnowflakeGenerator
 from typing import (
@@ -51,8 +52,7 @@ class MercurySyncUDPConnection:
         self.queue: Dict[str, Deque[Tuple[str, int, float, Any]] ] = defaultdict(deque)
         self.parsers: Dict[str, Message] = {}
         self._waiters: Dict[str, Deque[asyncio.Future]] = defaultdict(deque)
-        self._pending_requests = deque()
-        self._pending_responses = deque()
+        self._pending_responses: Deque[asyncio.Task] = deque()
 
         self._udp_cert_path: Union[str, None] = None
         self._udp_key_path: Union[str, None] = None
@@ -62,12 +62,19 @@ class MercurySyncUDPConnection:
         self._semaphore = asyncio.Semaphore(env.MERCURY_SYNC_MAX_CONCURRENCY)
         self._compressor = zstandard.ZstdCompressor()
         self._decompressor = zstandard.ZstdDecompressor()
+        
+        self._running = False
+        self._cleanup_task: Union[asyncio.Task, None] = None
+        self._cleanup_interval = TimeParser(env.MERCURY_SYNC_CLEANUP_INTERVAL).time
+
 
     def connect(
         self, 
         cert_path: Optional[str]=None,
         key_path: Optional[str]=None
     ) -> None:
+        
+        self._running = True
 
         udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -97,6 +104,8 @@ class MercurySyncUDPConnection:
         transport, _ = self._loop.run_until_complete(server)
         self._transport = transport
 
+        self._cleanup_task = self._loop.create_task(self._cleanup())
+
     def _create_udp_ssl_context(
         self,
         cert_path: Optional[str]=None,
@@ -121,6 +130,14 @@ class MercurySyncUDPConnection:
         ssl_ctx.set_ciphers('ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384')
         
         return ssl_ctx
+    
+    async def _cleanup(self):
+        while self._running:
+            await asyncio.sleep(self._cleanup_interval)
+
+            for pending in list(self._pending_responses):
+                if pending.done() or pending.cancelled():
+                    self._pending_responses.pop()
     
     async def send(
         self, 
@@ -323,5 +340,6 @@ class MercurySyncUDPConnection:
 
             self._transport.sendto(compressed, addr)
 
-    def close(self) -> None:
-        pass
+    async def close(self) -> None:
+        self._running = False
+        await self._cleanup_task
