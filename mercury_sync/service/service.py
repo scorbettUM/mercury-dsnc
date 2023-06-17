@@ -1,7 +1,6 @@
 import asyncio
 import random
 import inspect
-import signal
 from inspect import signature
 from mercury_sync.connection.tcp.mercury_sync_tcp_connection import MercurySyncTCPConnection
 from mercury_sync.connection.udp.mercury_sync_udp_connection import MercurySyncUDPConnection
@@ -16,18 +15,6 @@ from typing import (
     Union,
     AsyncIterable
 )
-
-
-def handle_loop_stop(signame, tcp_connection: MercurySyncTCPConnection):
-        try:
-            tcp_connection.close()
-
-        except BrokenPipeError:
-            pass 
-
-        except RuntimeError:
-            pass
-
 
 class Service:
     
@@ -113,15 +100,6 @@ class Service:
 
 
         self._loop = asyncio.get_event_loop()
-
-        for signame in ('SIGINT', 'SIGTERM'):
-            self._loop.add_signal_handler(
-                getattr(signal, signame),
-                lambda signame=signame: handle_loop_stop(
-                    signame,
-                    self._tcp_connection
-                )
-            )
 
     def start(
         self,
