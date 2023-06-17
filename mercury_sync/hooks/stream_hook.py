@@ -3,7 +3,7 @@
 
 import functools
 from mercury_sync.service import Service
-from mercury_sync.models.message import Message
+from typing import Dict, Any, AsyncIterable, Tuple, Coroutine
 
 
 def stream(

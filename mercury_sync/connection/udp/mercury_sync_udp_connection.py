@@ -67,7 +67,7 @@ class MercurySyncUDPConnection:
         self, 
         cert_path: Optional[str]=None,
         key_path: Optional[str]=None
-    ):
+    ) -> None:
 
         udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -127,14 +127,14 @@ class MercurySyncUDPConnection:
         event_name: str,
         data: Any, 
         addr: Tuple[str, int]
-    ) -> Tuple[int, Any]:
+    ) -> Tuple[int, Dict[str, Any]]:
 
         item = pickle.dumps((
             'request',
             next(self.id_generator),
             event_name,
             data
-        ))
+        ), protocol=pickle.HIGHEST_PROTOCOL)
 
         encrypted_message = self._encryptor.encrypt(item)
         compressed = self._compressor.compress(encrypted_message)
@@ -165,14 +165,14 @@ class MercurySyncUDPConnection:
         event_name: str,
         data: Any, 
         addr: Tuple[str, int]
-    ): 
+    ) -> AsyncIterable[Tuple[int, Dict[str, Any]]]: 
 
         item = pickle.dumps((
             'stream',
             next(self.id_generator),
             event_name,
             data
-        ))
+        ), protocol=pickle.HIGHEST_PROTOCOL)
 
         encrypted_message = self._encryptor.encrypt(item)
         compressed = self._compressor.compress(encrypted_message)
@@ -205,7 +205,7 @@ class MercurySyncUDPConnection:
         self,
         data: bytes, 
         addr: Tuple[str, int]
-    ):
+    ) -> None:
         
         decrypted = self._encryptor.decrypt(
             self._decompressor.decompress(data)
@@ -282,7 +282,7 @@ class MercurySyncUDPConnection:
         event_name: str,
         coroutine: Coroutine,
         addr: Tuple[str, int]
-    ):
+    ) -> Coroutine[Any, Any, None]:
         response: Message = await coroutine
 
         item = pickle.dumps(
@@ -291,7 +291,8 @@ class MercurySyncUDPConnection:
                 next(self.id_generator),
                 event_name,
                 response.to_data()
-            )
+            ),
+            protocol=pickle.HIGHEST_PROTOCOL
         )
 
         encrypted_message = self._encryptor.encrypt(item)
@@ -304,7 +305,7 @@ class MercurySyncUDPConnection:
         event_name: str,
         coroutine: AsyncIterable[Message],
         addr: Tuple[str, int]    
-    ):
+    ) -> Coroutine[Any, Any, None]:
         async for response in coroutine:
 
             item = pickle.dumps(
@@ -313,7 +314,8 @@ class MercurySyncUDPConnection:
                     next(self.id_generator),
                     event_name,
                     response.to_data()
-                )
+                ),
+                protocol=pickle.HIGHEST_PROTOCOL
             )
 
             encrypted_message = self._encryptor.encrypt(item)
@@ -321,5 +323,5 @@ class MercurySyncUDPConnection:
 
             self._transport.sendto(compressed, addr)
 
-    def close(self):
+    def close(self) -> None:
         pass

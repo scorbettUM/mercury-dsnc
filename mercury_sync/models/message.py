@@ -8,10 +8,9 @@ class Message(BaseModel):
     error: Optional[StrictStr]
 
     def to_data(self):
-        return self.dict(
-            exclude={
+        return {
+            name: value for name, value in self.__dict__.items() if name not in [
                 'host',
                 'port'
-            }
-        )
-    
+            ]
+        }

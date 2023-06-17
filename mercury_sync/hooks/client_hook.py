@@ -1,5 +1,6 @@
 import functools
 from mercury_sync.service import Service
+from typing import Dict, Tuple, Any, Coroutine
 
 
 def client(

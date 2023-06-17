@@ -12,7 +12,9 @@ from typing import (
     Tuple, 
     Dict, 
     Optional,
-    get_args
+    get_args,
+    Union,
+    AsyncIterable
 )
 
 
@@ -99,7 +101,7 @@ class Service:
 
                     response_type = rpc_signature.return_annotation
                     args = get_args(response_type)
-                    response_model = args[0]
+                    response_model: Message = args[0]
 
                     self._response_parsers[method.target] = response_model
 
@@ -125,7 +127,7 @@ class Service:
         self,
         cert_path: Optional[str]=None,
         key_path: Optional[str]=None
-    ):
+    ) -> None:
         self._tcp_connection.connect(
             cert_path=cert_path,
             key_path=key_path
@@ -137,7 +139,7 @@ class Service:
         remote: Message,
         cert_path: Optional[str]=None,
         key_path: Optional[str]=None
-    ):
+    ) -> None:
         address = (remote.host, remote.port)
         self._host_map[remote.__class__.__name__] = address
 
@@ -151,7 +153,7 @@ class Service:
         self, 
         event_name: str,
         message: Message
-    ):
+    ) -> Tuple[int, Union[Message, Error]]:
         (host, port)  = self._host_map.get(message.__class__.__name__)
         address = (
             host,
@@ -173,7 +175,7 @@ class Service:
         self,
         event_name: str,
         message: Message
-    ):
+    ) -> Tuple[int, Union[Message, Error]]:
         (host, port)  = self._host_map.get(message.__class__.__name__)
         address = (
             host,
@@ -199,7 +201,7 @@ class Service:
         self,
         event_name: str,
         message: Message
-    ):
+    ) -> AsyncIterable[Tuple[int, Union[Message, Error]]]:
         (host, port)  = self._host_map.get(message.__class__.__name__)
         address = (
             host,
@@ -222,7 +224,7 @@ class Service:
         self,
         event_name: str,
         message: Message
-    ):
+    ) -> AsyncIterable[Tuple[int, Union[Message, Error]]]:
         (host, port)  = self._host_map.get(message.__class__.__name__)
         address = (
             host,
@@ -245,6 +247,6 @@ class Service:
 
             yield shard_id, response_data
     
-    async def close(self):
+    async def close(self) -> None:
         self._tcp_connection.close()
         self._udp_connection.close()

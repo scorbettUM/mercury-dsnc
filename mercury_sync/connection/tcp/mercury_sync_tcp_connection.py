@@ -137,7 +137,7 @@ class MercurySyncTCPConnection:
         address: Tuple[str, int],
         cert_path: Optional[str]=None,
         key_path: Optional[str]=None
-    ):
+    ) -> Coroutine[Any, Any, asyncio.Transport]:
         
         if cert_path and key_path:
             self._client_ssl_context = self._create_client_ssl_context(
@@ -193,21 +193,24 @@ class MercurySyncTCPConnection:
         event_name: bytes,
         data: bytes, 
         address: Tuple[str, int]
-    ) -> str:
+    ) -> Tuple[int, Dict[str, Any]]:
         
         async with self._semaphore:
             self._last_call.append(event_name)
 
             client_transport = self._client_transports.get(address)
 
-            item = pickle.dumps((
-                'request',
-                next(self.id_generator),
-                event_name,
-                data,
-                self.host,
-                self.port
-            ))
+            item = pickle.dumps(
+                (
+                    'request',
+                    next(self.id_generator),
+                    event_name,
+                    data,
+                    self.host,
+                    self.port
+                ),
+                protocol=pickle.HIGHEST_PROTOCOL
+            )
 
             encrypted_message = self._encryptor.encrypt(item)
             compressed = self._compressor.compress(encrypted_message)
@@ -238,7 +241,7 @@ class MercurySyncTCPConnection:
         event_name: str,
         data: Any, 
         address: Tuple[str, int]
-    ): 
+    ) -> AsyncIterable[Tuple[int, Dict[str, Any]]]: 
         
         async with self._semaphore:
             self._last_call.append(event_name)
@@ -247,25 +250,31 @@ class MercurySyncTCPConnection:
 
 
             if self._stream is False:
-                item = pickle.dumps((
-                    'stream_connect',
-                    next(self.id_generator),
-                    event_name,
-                    data,
-                    self.host,
-                    self.port
-                ))
+                item = pickle.dumps(
+                    (
+                        'stream_connect',
+                        next(self.id_generator),
+                        event_name,
+                        data,
+                        self.host,
+                        self.port
+                    ),
+                    protocol=pickle.HIGHEST_PROTOCOL
+                )
 
 
             else:
-                item = pickle.dumps((
-                    'stream',
-                    next(self.id_generator),
-                    event_name,
-                    data,
-                    self.host,
-                    self.port
-                ))
+                item = pickle.dumps(
+                    (
+                        'stream',
+                        next(self.id_generator),
+                        event_name,
+                        data,
+                        self.host,
+                        self.port
+                    ),
+                    protocol=pickle.HIGHEST_PROTOCOL
+                )
 
             encrypted_message = self._encryptor.encrypt(item)
             compressed = self._compressor.compress(encrypted_message)
@@ -283,14 +292,17 @@ class MercurySyncTCPConnection:
 
                 self._stream = True
 
-                item = pickle.dumps((
-                    'stream',
-                    next(self.id_generator),
-                    event_name,
-                    data,
-                    self.host,
-                    self.port
-                ))
+                item = pickle.dumps(
+                    (
+                        'stream',
+                        next(self.id_generator),
+                        event_name,
+                        data,
+                        self.host,
+                        self.port
+                    ),
+                    pickle.HIGHEST_PROTOCOL
+                )
 
                 encrypted_message = self._encryptor.encrypt(item)
                 compressed = self._compressor.compress(encrypted_message)
@@ -326,7 +338,7 @@ class MercurySyncTCPConnection:
         self,
         data: bytes,
         transport: asyncio.Transport
-    ):
+    ) -> None:
         decompressed = b''
 
         try:
@@ -469,7 +481,7 @@ class MercurySyncTCPConnection:
         event_name: str,
         coroutine: Coroutine,
         transport: asyncio.Transport
-    ):
+    ) -> Coroutine[Any, Any, None]:
         response: Message = await coroutine
 
         item = pickle.dumps(
@@ -480,7 +492,8 @@ class MercurySyncTCPConnection:
                 response.to_data(), 
                 self.host,
                 self.port
-            )
+            ),
+            protocol=pickle.HIGHEST_PROTOCOL
         )
 
         encrypted_message = self._encryptor.encrypt(item)
@@ -493,7 +506,7 @@ class MercurySyncTCPConnection:
         event_name: str,
         coroutine: AsyncIterable[Message],
         transport: asyncio.Transport       
-    ):
+    ) -> Coroutine[Any, Any, None]:
   
         async for response in coroutine:
             item = pickle.dumps(
@@ -504,7 +517,8 @@ class MercurySyncTCPConnection:
                     response.to_data(), 
                     self.host,
                     self.port
-                )
+                ),
+                protocol=pickle.HIGHEST_PROTOCOL
             )
 
             encrypted_message = self._encryptor.encrypt(item)
@@ -516,7 +530,7 @@ class MercurySyncTCPConnection:
         self,
         event_name: str,
         transport: asyncio.Transport            
-    ):
+    ) -> Coroutine[Any, Any, None]:
         message = Message()
         item = pickle.dumps(
             (
@@ -526,7 +540,8 @@ class MercurySyncTCPConnection:
                 message.to_data(), 
                 self.host,
                 self.port
-            )
+            ),
+            protocol=pickle.HIGHEST_PROTOCOL
         )
 
         encrypted_message = self._encryptor.encrypt(item)
@@ -538,10 +553,9 @@ class MercurySyncTCPConnection:
         self,
         error_message: str,
         transport: asyncio.Transport
-    ):
+    ) -> Coroutine[Any, Any, None]:
+        
         error = Message(
-            host=self.host,
-            port=self.port,
             error=error_message
         )
 
@@ -553,7 +567,8 @@ class MercurySyncTCPConnection:
                 error.to_data(), 
                 self.host,
                 self.port
-            )
+            ),
+            protocol=pickle.HIGHEST_PROTOCOL
         )
 
         encrypted_message = self._encryptor.encrypt(item)
@@ -561,7 +576,7 @@ class MercurySyncTCPConnection:
 
         transport.write(compressed)
         
-    def close(self):
+    def close(self) -> None:
         self._stream = False
 
         
