@@ -54,7 +54,6 @@ class MercurySyncTCPConnection:
         self.parsers: Dict[str, Message] = {}
         self._waiters: Dict[str, Deque[asyncio.Future]] = defaultdict(deque)
         self._pending_responses: Deque[asyncio.Task]= deque()
-        self._pending_exceptions: Deque[asyncio.Task] = deque()
         self._last_call: Deque[str] = deque()
 
         self._sent_values = deque()
@@ -362,7 +361,7 @@ class MercurySyncTCPConnection:
             decompressed = self._decompressor.decompress(data)
 
         except Exception as decompression_error:
-            self._pending_exceptions.append(
+            self._pending_responses.append(
                 asyncio.create_task(
                     self._send_error(
                         error_message=str(decompression_error),
