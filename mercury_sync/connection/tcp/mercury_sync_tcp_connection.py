@@ -1,10 +1,9 @@
 
 import asyncio
-import base64
 import pickle
 import socket
 import ssl
-import zlib
+import zstandard
 from collections import deque, defaultdict
 from mercury_sync.encryption import AESGCMFernet
 from mercury_sync.env import Env
@@ -54,6 +53,8 @@ class MercurySyncTCPConnection:
         self.parsers: Dict[str, Message] = {}
         self._waiters: Dict[str, Deque[asyncio.Future]] = defaultdict(deque)
         self._pending_responses: Dict[str, Deque[asyncio.Task]] = defaultdict(deque)
+        self._pending_exceptions: Deque[asyncio.Task] = deque()
+        self._last_call: Deque[str] = deque()
 
         self._sent_values = deque()
         self.connected = False
@@ -71,6 +72,8 @@ class MercurySyncTCPConnection:
         
         self._encryptor = AESGCMFernet(env)
         self._semaphore = asyncio.Semaphore(env.MERCURY_SYNC_MAX_CONCURRENCY)
+        self._compressor = zstandard.ZstdCompressor()
+        self._decompressor = zstandard.ZstdDecompressor()
 
     def connect(
         self,
@@ -193,6 +196,8 @@ class MercurySyncTCPConnection:
     ) -> str:
         
         async with self._semaphore:
+            self._last_call.append(event_name)
+
             client_transport = self._client_transports.get(address)
 
             item = pickle.dumps((
@@ -205,7 +210,7 @@ class MercurySyncTCPConnection:
             ))
 
             encrypted_message = self._encryptor.encrypt(item)
-            compressed = zlib.compress(encrypted_message)
+            compressed = self._compressor.compress(encrypted_message)
 
             client_transport.write(compressed)
 
@@ -236,6 +241,8 @@ class MercurySyncTCPConnection:
     ): 
         
         async with self._semaphore:
+            self._last_call.append(event_name)
+
             client_transport = self._client_transports.get(address)
 
 
@@ -261,7 +268,7 @@ class MercurySyncTCPConnection:
                 ))
 
             encrypted_message = self._encryptor.encrypt(item)
-            compressed = zlib.compress(encrypted_message)
+            compressed = self._compressor.compress(encrypted_message)
 
             client_transport.write(compressed)
 
@@ -286,7 +293,7 @@ class MercurySyncTCPConnection:
                 ))
 
                 encrypted_message = self._encryptor.encrypt(item)
-                compressed = zlib.compress(encrypted_message)
+                compressed = self._compressor.compress(encrypted_message)
 
                 client_transport.write(compressed)
 
@@ -320,9 +327,32 @@ class MercurySyncTCPConnection:
         data: bytes,
         transport: asyncio.Transport
     ):
-        decrypted = self._encryptor.decrypt(
-            zlib.decompress(data)
-        )
+        decompressed = b''
+
+        try:
+            decompressed = self._decompressor.decompress(data)
+
+        except Exception as decompression_error:
+            self._pending_exceptions.append(
+                asyncio.create_task(
+                    self._send_error(
+                        error_message=str(decompression_error),
+                        transport=transport
+                    )
+                )
+            )
+
+            if len(self._last_call) > 0:
+                event_name = self._last_call.pop()
+                event_waiter = self._waiters[event_name]
+
+                if len(event_waiter) > 0:
+                    waiter = event_waiter.pop()
+                    waiter.set_result(None)
+
+            return
+
+        decrypted = self._encryptor.decrypt(decompressed)
 
         result: Tuple[
             str, 
@@ -414,6 +444,10 @@ class MercurySyncTCPConnection:
 
 
         else:
+
+            if event_name is None and len(self._last_call) > 0:
+                event_name = self._last_call.pop()
+
             self.queue[event_name].append((
                 message_type, 
                 shard_id,
@@ -450,7 +484,7 @@ class MercurySyncTCPConnection:
         )
 
         encrypted_message = self._encryptor.encrypt(item)
-        compressed = zlib.compress(encrypted_message)
+        compressed = self._compressor.compress(encrypted_message)
 
         transport.write(compressed)
 
@@ -474,7 +508,7 @@ class MercurySyncTCPConnection:
             )
 
             encrypted_message = self._encryptor.encrypt(item)
-            compressed = zlib.compress(encrypted_message)
+            compressed = self._compressor.compress(encrypted_message)
 
             transport.write(compressed)
 
@@ -496,7 +530,34 @@ class MercurySyncTCPConnection:
         )
 
         encrypted_message = self._encryptor.encrypt(item)
-        compressed = zlib.compress(encrypted_message)
+        compressed = self._compressor.compress(encrypted_message)
+
+        transport.write(compressed)
+
+    async def _send_error(
+        self,
+        error_message: str,
+        transport: asyncio.Transport
+    ):
+        error = Message(
+            host=self.host,
+            port=self.port,
+            error=error_message
+        )
+
+        item = pickle.dumps(
+            (
+                'response', 
+                next(self.id_generator),
+                None,
+                error.to_data(), 
+                self.host,
+                self.port
+            )
+        )
+
+        encrypted_message = self._encryptor.encrypt(item)
+        compressed = self._compressor.compress(encrypted_message)
 
         transport.write(compressed)
         

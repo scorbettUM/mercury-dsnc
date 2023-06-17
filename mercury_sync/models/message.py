@@ -5,6 +5,7 @@ from typing import Optional
 class Message(BaseModel):
     host: Optional[StrictStr]
     port: Optional[StrictInt]
+    error: Optional[StrictStr]
 
     def to_data(self):
         return self.dict(

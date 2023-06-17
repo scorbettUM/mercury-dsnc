@@ -41,7 +41,8 @@ setup(
     ],
     install_requires=[
         'pydantic',
-        'python3-dtls'
+        'python3-dtls',
+        'zstandard'
     ],
     python_requires='>=3.10'
 )

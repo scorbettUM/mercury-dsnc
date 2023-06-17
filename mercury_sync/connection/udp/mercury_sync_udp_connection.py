@@ -3,7 +3,7 @@ import asyncio
 import pickle
 import socket
 import ssl
-import zlib
+import zstandard
 from collections import deque, defaultdict
 from dtls import do_patch
 from mercury_sync.connection.udp.protocols import MercurySyncUDPProtocol
@@ -60,6 +60,8 @@ class MercurySyncUDPConnection:
 
         self._encryptor = AESGCMFernet(env)
         self._semaphore = asyncio.Semaphore(env.MERCURY_SYNC_MAX_CONCURRENCY)
+        self._compressor = zstandard.ZstdCompressor()
+        self._decompressor = zstandard.ZstdDecompressor()
 
     def connect(
         self, 
@@ -135,7 +137,7 @@ class MercurySyncUDPConnection:
         ))
 
         encrypted_message = self._encryptor.encrypt(item)
-        compressed = zlib.compress(encrypted_message)
+        compressed = self._compressor.compress(encrypted_message)
         
         self._transport.sendto(compressed, addr)
 
@@ -173,7 +175,7 @@ class MercurySyncUDPConnection:
         ))
 
         encrypted_message = self._encryptor.encrypt(item)
-        compressed = zlib.compress(encrypted_message)
+        compressed = self._compressor.compress(encrypted_message)
         
         self._transport.sendto(compressed, addr)
 
@@ -206,7 +208,7 @@ class MercurySyncUDPConnection:
     ):
         
         decrypted = self._encryptor.decrypt(
-            zlib.decompress(data)
+            self._decompressor.decompress(data)
         )
 
         result: Tuple[
@@ -293,7 +295,7 @@ class MercurySyncUDPConnection:
         )
 
         encrypted_message = self._encryptor.encrypt(item)
-        compressed = zlib.compress(encrypted_message)
+        compressed = self._compressor.compress(encrypted_message)
 
         self._transport.sendto(compressed, addr)
 
@@ -315,7 +317,7 @@ class MercurySyncUDPConnection:
             )
 
             encrypted_message = self._encryptor.encrypt(item)
-            compressed = zlib.compress(encrypted_message)
+            compressed = self._compressor.compress(encrypted_message)
 
             self._transport.sendto(compressed, addr)
 

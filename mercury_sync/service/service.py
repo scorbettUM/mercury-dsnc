@@ -6,6 +6,7 @@ from inspect import signature
 from mercury_sync.connection.tcp.mercury_sync_tcp_connection import MercurySyncTCPConnection
 from mercury_sync.connection.udp.mercury_sync_udp_connection import MercurySyncUDPConnection
 from mercury_sync.env import load_env, Env
+from mercury_sync.models.error import Error
 from mercury_sync.models.message import Message
 from typing import (
     Tuple, 
@@ -185,6 +186,10 @@ class Service:
             address
         )
 
+
+        if data.get('error'):
+            return shard_id,  Error(**data)
+
         response_data = self._response_parsers.get(event_name)(
             **data
         )
@@ -230,6 +235,10 @@ class Service:
             address
         ):
             shard_id, data = response
+
+            if data.get('error'):
+                yield shard_id, Error(**data)
+
             response_data = self._response_parsers.get(event_name)(
                 **data
             )
