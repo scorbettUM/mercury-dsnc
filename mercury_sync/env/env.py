@@ -1,11 +1,9 @@
-import psutil
 from pydantic import (
     BaseModel,
     StrictStr,
     StrictInt
 )
 from typing import (
-    Optional, 
     Dict, 
     Union,
     Callable

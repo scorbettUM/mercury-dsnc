@@ -77,6 +77,7 @@ class MercurySyncTCPConnection:
         self._decompressor = zstandard.ZstdDecompressor()
         self._running = False
         self._cleanup_task: Union[asyncio.Task, None] = None
+        self._sleep_task: Union[asyncio.Task, None] = None
         self._cleanup_interval = TimeParser(env.MERCURY_SYNC_CLEANUP_INTERVAL).time
 
     def connect(
@@ -198,7 +199,11 @@ class MercurySyncTCPConnection:
     
     async def _cleanup(self):
         while self._running:
-            await asyncio.sleep(self._cleanup_interval)
+            self._sleep_task = asyncio.create_task(
+                asyncio.sleep(self._cleanup_interval)
+            )
+
+            await self._sleep_task
 
             for pending in list(self._pending_responses):
                 if pending.done() or pending.cancelled():
@@ -595,6 +600,22 @@ class MercurySyncTCPConnection:
     async def close(self) -> None:
         self._stream = False
         self._running = False
-        await self._cleanup_task
+        
+        self._cleanup_task.cancel()
+        if self._cleanup_task.cancelled() is False:
+            try:
+                self._sleep_task.cancel()
+                if not self._sleep_task.cancelled():
+                    await self._sleep_task
+
+            except asyncio.CancelledError:
+                pass
+
+            try:
+
+                await self._cleanup_task
+
+            except asyncio.CancelledError:
+                pass
 
         
