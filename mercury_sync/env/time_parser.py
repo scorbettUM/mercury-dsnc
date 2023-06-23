@@ -4,8 +4,14 @@ from datetime import timedelta
 class TimeParser:
 
     def __init__(self, time_amount: str) -> None:
-        self.UNITS = {'s':'seconds', 'm':'minutes', 'h':'hours', 'd':'days', 'w':'weeks'}
-        self.time = int(
+        self.UNITS = {
+            's':'seconds', 
+            'm':'minutes', 
+            'h':'hours', 
+            'd':'days', 
+            'w':'weeks'
+        }
+        self.time = float(
             timedelta(
                 **{
                     self.UNITS.get(

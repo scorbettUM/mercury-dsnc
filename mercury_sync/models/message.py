@@ -9,8 +9,5 @@ class Message(BaseModel):
 
     def to_data(self):
         return {
-            name: value for name, value in self.__dict__.items() if name not in [
-                'host',
-                'port'
-            ]
+            name: value for name, value in self.__dict__.items() if value is not None
         }

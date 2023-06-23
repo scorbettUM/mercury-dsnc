@@ -1,5 +1,6 @@
 
 import asyncio
+import errno
 import pickle
 import socket
 import ssl
@@ -47,17 +48,19 @@ class MercurySyncTCPConnection:
             Coroutine
         ] = {}
 
-        self._client_transports: Dict[str, asyncio.Transport] = {}
-        self._server: asyncio.Server = None
-        self._loop = asyncio.get_event_loop()
         self.queue: Dict[str, Deque[Tuple[str, int, float, Any]] ] = defaultdict(deque)
         self.parsers: Dict[str, Message] = {}
+        self.connected = False
+        self._running = False
+
+        self._client_transports: Dict[str, asyncio.Transport] = {}
+        self._server: asyncio.Server = None
+        self._loop: Union[asyncio.AbstractEventLoop, None] = None
         self._waiters: Dict[str, Deque[asyncio.Future]] = defaultdict(deque)
         self._pending_responses: Deque[asyncio.Task]= deque()
         self._last_call: Deque[str] = deque()
 
         self._sent_values = deque()
-        self.connected = False
         self._server_socket = None
         self._stream = False
         
@@ -71,22 +74,34 @@ class MercurySyncTCPConnection:
         self._server_ssl_context: Union[ssl.SSLContext, None] = None
         
         self._encryptor = AESGCMFernet(env)
-        self._semaphore = asyncio.Semaphore(env.MERCURY_SYNC_MAX_CONCURRENCY)
-        self._compressor = zstandard.ZstdCompressor()
-
-        self._decompressor = zstandard.ZstdDecompressor()
-        self._running = False
+        self._semaphore: Union[asyncio.Semaphore, None] = None
+        self._compressor: Union[zstandard.ZstdCompressor, None] = None
+        self._decompressor: Union[zstandard.ZstdDecompressor, None] = None
         self._cleanup_task: Union[asyncio.Task, None] = None
         self._sleep_task: Union[asyncio.Task, None] = None
         self._cleanup_interval = TimeParser(env.MERCURY_SYNC_CLEANUP_INTERVAL).time
+        self._max_concurrency = env.MERCURY_SYNC_MAX_CONCURRENCY
 
     def connect(
         self,
         cert_path: Optional[str]=None,
-        key_path: Optional[str]=None
+        key_path: Optional[str]=None,
+        worker_socket: Optional[socket.socket]=None
     ):
 
+        try:
+
+            self._loop = asyncio.get_event_loop()
+
+        except Exception:
+            self._loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._loop)
+            
         self._running = True
+        self._semaphore = asyncio.Semaphore(self._max_concurrency)
+
+        self._compressor = zstandard.ZstdCompressor()
+        self._decompressor = zstandard.ZstdDecompressor()
 
         if cert_path and key_path:
             self._server_ssl_context = self._create_server_ssl_context(
@@ -94,13 +109,20 @@ class MercurySyncTCPConnection:
                 key_path=key_path
             ) 
 
-        if self.connected is False:
-
+        if self.connected is False and worker_socket is None:
             self._server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self._server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self._server_socket.bind((self.host, self.port))
 
             self._server_socket.setblocking(False)
+
+        elif self.connected is False:
+            self._server_socket = worker_socket
+            host, port = worker_socket.getsockname()
+            self.host = host
+            self.port = port
+
+        if self.connected is False:
 
             server = self._loop.create_server(
                 lambda: MercurySyncTCPServerProtocol(
@@ -112,6 +134,63 @@ class MercurySyncTCPConnection:
 
             self._server = self._loop.run_until_complete(server)
 
+            self.connected = True
+
+            self._cleanup_task = self._loop.create_task(self._cleanup())
+
+    async def connect_async(
+        self,
+        cert_path: Optional[str]=None,
+        key_path: Optional[str]=None,
+        worker_socket: Optional[socket.socket]=None
+    ):
+
+        try:
+
+            self._loop = asyncio.get_event_loop()
+
+        except Exception:
+            self._loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._loop)
+
+        self._running = True
+        self._semaphore = asyncio.Semaphore(self._max_concurrency)
+
+        self._compressor = zstandard.ZstdCompressor()
+        self._decompressor = zstandard.ZstdDecompressor()
+
+        if cert_path and key_path:
+            self._server_ssl_context = self._create_server_ssl_context(
+                cert_path=cert_path,
+                key_path=key_path
+            ) 
+
+        if self.connected is False and worker_socket is None:
+            self._server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self._server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self._server_socket.bind((self.host, self.port))
+
+            self._server_socket
+
+            self._server_socket.setblocking(False)
+
+        elif self.connected is False:
+            self._server_socket = worker_socket
+            host, port = worker_socket.getsockname()
+            self.host = host
+            self.port = port
+
+        if self.connected is False:
+
+            server = self._loop.create_server(
+                lambda: MercurySyncTCPServerProtocol(
+                    self.read
+                ),
+                sock=self._server_socket,
+                ssl=self._server_ssl_context
+            )
+
+            self._server = await server
             self.connected = True
 
             self._cleanup_task = self._loop.create_task(self._cleanup())
@@ -148,13 +227,13 @@ class MercurySyncTCPConnection:
         key_path: Optional[str]=None
     ) -> Coroutine[Any, Any, asyncio.Transport]:
         
+        self._loop = asyncio.get_event_loop()
         if cert_path and key_path:
             self._client_ssl_context = self._create_client_ssl_context(
                 cert_path=cert_path,
                 key_path=key_path
             ) 
 
-        host, port = address
         tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         tcp_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         await self._loop.run_in_executor(None, tcp_socket.connect, address)
@@ -165,8 +244,7 @@ class MercurySyncTCPConnection:
             lambda: MercurySyncTCPClientProtocol(
                 self.read
             ),
-            host=host,
-            port=port,
+            sock=tcp_socket,
             ssl=self._client_ssl_context
         )
 
@@ -336,7 +414,7 @@ class MercurySyncTCPConnection:
                 await waiter
 
 
-            while len(self.queue[event_name]) > 0 and self._stream:
+            while bool(self.queue[event_name]) and self._stream:
 
                 (
                     _,
@@ -375,13 +453,19 @@ class MercurySyncTCPConnection:
                 )
             )
 
-            if len(self._last_call) > 0:
+            if bool(self._last_call):
                 event_name = self._last_call.pop()
                 event_waiter = self._waiters[event_name]
 
-                if len(event_waiter) > 0:
+                if bool(event_waiter):
                     waiter = event_waiter.pop()
-                    waiter.set_result(None)
+
+                    try:
+
+                        waiter.set_result(None)
+
+                    except asyncio.InvalidStateError:
+                        pass
 
             return
 
@@ -441,9 +525,15 @@ class MercurySyncTCPConnection:
 
             event_waiter = self._waiters[event_name]
 
-            if len(event_waiter) > 0:
+            if bool(event_waiter):
                 waiter = event_waiter.pop()
-                waiter.set_result(None)
+
+                try:
+
+                    waiter.set_result(None)
+
+                except asyncio.InvalidStateError:
+                    pass
 
         elif message_type == 'stream' or message_type == "stream_connect":
 
@@ -471,14 +561,19 @@ class MercurySyncTCPConnection:
 
             event_waiter = self._waiters[event_name]
 
-            if len(event_waiter) > 0:
+            if bool(event_waiter):
                 waiter = event_waiter.pop()
-                waiter.set_result(None)
 
+                try:
+
+                    waiter.set_result(None)
+
+                except asyncio.InvalidStateError:
+                    pass
 
         else:
 
-            if event_name is None and len(self._last_call) > 0:
+            if event_name is None and bool(self._last_call):
                 event_name = self._last_call.pop()
 
             self.queue[event_name].append((
@@ -493,9 +588,15 @@ class MercurySyncTCPConnection:
                 
             event_waiter = self._waiters[event_name]
 
-            if len(event_waiter) > 0:
+            if bool(event_waiter):
                 waiter = event_waiter.pop()
-                waiter.set_result(None)
+
+                try:
+
+                    waiter.set_result(None)
+
+                except asyncio.InvalidStateError:
+                    pass
 
     async def _read(
         self,
@@ -601,21 +702,22 @@ class MercurySyncTCPConnection:
         self._stream = False
         self._running = False
         
-        self._cleanup_task.cancel()
-        if self._cleanup_task.cancelled() is False:
-            try:
-                self._sleep_task.cancel()
-                if not self._sleep_task.cancelled():
-                    await self._sleep_task
+        if self._cleanup_task:
+            self._cleanup_task.cancel()
+            if self._cleanup_task.cancelled() is False:
+                try:
+                    self._sleep_task.cancel()
+                    if not self._sleep_task.cancelled():
+                        await self._sleep_task
 
-            except asyncio.CancelledError:
-                pass
+                except asyncio.CancelledError:
+                    pass
 
-            try:
+                try:
 
-                await self._cleanup_task
+                    await self._cleanup_task
 
-            except asyncio.CancelledError:
-                pass
+                except asyncio.CancelledError:
+                    pass
 
-        
+            

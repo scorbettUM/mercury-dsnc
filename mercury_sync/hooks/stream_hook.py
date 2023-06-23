@@ -3,7 +3,8 @@
 
 import functools
 from mercury_sync.service import Service
-from typing import Dict, Any, AsyncIterable, Tuple, Coroutine
+from mercury_sync.service.controller import Controller
+from typing import Union
 
 
 def stream(
@@ -21,7 +22,7 @@ def stream(
             *args,
             **kwargs
         ):
-            connection: Service = args[0]
+            connection: Union[Service, Controller] = args[0]
 
             if as_tcp:
 

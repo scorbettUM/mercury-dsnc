@@ -32,7 +32,7 @@ class SnowflakeGenerator:
     def __iter__(self):
         return self
 
-    def __next__(self) -> Optional[int]:
+    def generate(self) -> Optional[int]:
 
         current = int(time() * 1000)
 

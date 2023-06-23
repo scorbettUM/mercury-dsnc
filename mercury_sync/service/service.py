@@ -1,5 +1,7 @@
+from __future__ import annotations
 import asyncio
 import random
+import socket
 import inspect
 from inspect import signature
 from mercury_sync.connection.tcp.mercury_sync_tcp_connection import MercurySyncTCPConnection
@@ -10,6 +12,7 @@ from mercury_sync.models.message import Message
 from typing import (
     Tuple, 
     Dict, 
+    List,
     Optional,
     get_args,
     Union,
@@ -21,13 +24,23 @@ class Service:
     def __init__(
         self,
         host: str,
-        port: int
+        port: int,
+        cert_path: Optional[str]=None,
+        key_path: Optional[str]=None,
+        env: Optional[Env]=None
     ) -> None:
         self.name = self.__class__.__name__
         self._instance_id = random.randint(0, 2**16)
         self._response_parsers: Dict[str, Message] = {}
 
-        env = load_env(Env.types_map())
+        self.host = host
+        self.port = port
+        self.cert_path = cert_path
+        self.key_path = key_path
+
+        if env is None:
+            env = load_env(Env.types_map())
+
         self._udp_connection = MercurySyncUDPConnection(
             host,
             port,
@@ -67,7 +80,6 @@ class Service:
             rpc_signature = signature(method)
 
             if not_internal and not_reserved and is_server:
-
                 
                 for param_type in rpc_signature.parameters.values():
                     if param_type.annotation in Message.__subclasses__():
@@ -88,29 +100,73 @@ class Service:
 
                     response_type = rpc_signature.return_annotation
                     args = get_args(response_type)
-                    response_model: Message = args[0]
 
-                    self._response_parsers[method.target] = response_model
+                    response_call_type: Tuple[int, Message] = args[0]
+                    self._response_parsers[method.target] = get_args(response_call_type)[1]
 
                 else:
 
-                    response_model = rpc_signature.return_annotation
+                    response_type = rpc_signature.return_annotation
+                    args = get_args(response_type)
+                    response_model: Tuple[int, Message] = args[1]
+
                     self._response_parsers[method.target] = response_model
 
 
 
-        self._loop = asyncio.get_event_loop()
+
+        self._loop: Union[ asyncio.AbstractEventLoop, None] = None
 
     def start(
         self,
-        cert_path: Optional[str]=None,
-        key_path: Optional[str]=None
+        tcp_worker_socket: Optional[socket.socket]=None,
+        udp_worker_socket: Optional[socket.socket]=None
     ) -> None:
+        
+        self._loop = asyncio.get_event_loop()
+
         self._tcp_connection.connect(
-            cert_path=cert_path,
-            key_path=key_path
+            cert_path=self.cert_path,
+            key_path=self.key_path,
+            worker_socket=tcp_worker_socket
         )
-        self._udp_connection.connect(cert_path=cert_path)
+        self._udp_connection.connect(
+            cert_path=self.cert_path,
+            key_path=self.key_path,
+            worker_socket=udp_worker_socket
+        )
+
+    def create_pool(self, size: int) -> List[Service]:
+
+        port_pool_size = size * 2
+
+        ports = [
+            self.port + idx for idx in range(0, port_pool_size, 2)
+        ]
+
+        return [
+            self._copy(
+                port=port
+            ) for port in ports
+        ]
+
+    def _copy(
+        self,
+        host: str=None,
+        port: int= None
+    ):
+        
+        if host is None:
+            host = self.host
+
+        if port is None:
+            port = self.port
+
+        return type(self)(
+            host,
+            port
+        )
+
 
     async def connect(
         self,
@@ -120,6 +176,12 @@ class Service:
     ) -> None:
         address = (remote.host, remote.port)
         self._host_map[remote.__class__.__name__] = address
+
+        if cert_path is None:
+            cert_path = self.cert_path
+
+        if key_path is None:
+            key_path = self.key_path
 
         await self._tcp_connection.connect_client(
             (remote.host, remote.port + 1),

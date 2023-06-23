@@ -1,4 +1,5 @@
 
+from __future__ import annotations
 import asyncio
 import pickle
 import socket
@@ -48,7 +49,7 @@ class MercurySyncUDPConnection:
         ] = {}
 
         self._transport: asyncio.DatagramTransport = None
-        self._loop = asyncio.get_event_loop()
+        self._loop: Union[asyncio.AbstractEventLoop, None] = None
         self.queue: Dict[str, Deque[Tuple[str, int, float, Any]] ] = defaultdict(deque)
         self.parsers: Dict[str, Message] = {}
         self._waiters: Dict[str, Deque[asyncio.Future]] = defaultdict(deque)
@@ -59,26 +60,51 @@ class MercurySyncUDPConnection:
         self._udp_ssl_context: Union[ssl.SSLContext, None] = None
 
         self._encryptor = AESGCMFernet(env)
-        self._semaphore = asyncio.Semaphore(env.MERCURY_SYNC_MAX_CONCURRENCY)
-        self._compressor = zstandard.ZstdCompressor()
-        self._decompressor = zstandard.ZstdDecompressor()
+        self._semaphore: Union[asyncio.Semaphore, None] = None
+        self._compressor: Union[zstandard.ZstdCompressor, None] = None
+        self._decompressor: Union[zstandard.ZstdDecompressor, None] = None
         
         self._running = False
         self._cleanup_task: Union[asyncio.Task, None] = None
         self._sleep_task: Union[asyncio.Task, None] = None
         self._cleanup_interval = TimeParser(env.MERCURY_SYNC_CLEANUP_INTERVAL).time
-
+        self._max_concurrency = env.MERCURY_SYNC_MAX_CONCURRENCY
 
     def connect(
         self, 
         cert_path: Optional[str]=None,
-        key_path: Optional[str]=None
+        key_path: Optional[str]=None,
+        worker_socket: Optional[socket.socket]=None
     ) -> None:
         
+        try:
+
+            self._loop = asyncio.get_event_loop()
+
+        except Exception:
+            self._loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._loop)
+
         self._running = True
 
-        udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-        udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._semaphore = asyncio.Semaphore(self._max_concurrency)
+
+        self._compressor = zstandard.ZstdCompressor()
+        self._decompressor = zstandard.ZstdDecompressor()
+
+        if worker_socket is None:
+            udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+            udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            udp_socket.bind((
+                self.host,
+                self.port
+            ))
+
+            udp_socket.setblocking(False)
+
+        else:
+            udp_socket = worker_socket
+
 
         if cert_path and key_path:
             self._udp_ssl_context = self._create_udp_ssl_context(
@@ -88,13 +114,6 @@ class MercurySyncUDPConnection:
 
             udp_socket = self._udp_ssl_context.wrap_socket(udp_socket)
 
-        udp_socket.bind((
-            self.host,
-            self.port
-        ))
-
-        udp_socket.setblocking(False)
-
         server = self._loop.create_datagram_endpoint(
             lambda: MercurySyncUDPProtocol(
                 self.read
@@ -103,6 +122,71 @@ class MercurySyncUDPConnection:
         )
 
         transport, _ = self._loop.run_until_complete(server)
+        self._transport = transport
+
+        self._cleanup_task = self._loop.create_task(self._cleanup())
+
+    def copy_to_connection(self, new_udp_connection: MercurySyncUDPConnection) -> MercurySyncUDPConnection:
+        new_udp_connection.parsers.update(self.parsers)
+        new_udp_connection._udp_cert_path = self._udp_cert_path
+        new_udp_connection._udp_key_path = self._udp_key_path
+        new_udp_connection._udp_ssl_context = self._udp_ssl_context
+        new_udp_connection._running = True
+
+        new_udp_connection._semaphore = asyncio.Semaphore(self._max_concurrency)
+
+        new_udp_connection._compressor = zstandard.ZstdCompressor()
+        new_udp_connection._decompressor = zstandard.ZstdDecompressor()
+        new_udp_connection._transport = self._transport
+        new_udp_connection._cleanup_task = self._loop.create_task(new_udp_connection._cleanup())
+
+        return new_udp_connection
+
+    async def connect_async(
+        self, 
+        cert_path: Optional[str]=None,
+        key_path: Optional[str]=None,
+        worker_socket: Optional[socket.socket]=None
+    ) -> None:
+        
+        self._loop = asyncio.get_event_loop()
+        self._running = True
+
+        self._semaphore = asyncio.Semaphore(self._max_concurrency)
+
+        self._compressor = zstandard.ZstdCompressor()
+        self._decompressor = zstandard.ZstdDecompressor()
+
+        if worker_socket is None:
+            udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+            udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            udp_socket.bind((
+                self.host,
+                self.port
+            ))
+
+            udp_socket.setblocking(False)
+
+        else:
+            udp_socket = worker_socket
+
+
+        if cert_path and key_path:
+            self._udp_ssl_context = self._create_udp_ssl_context(
+                cert_path=cert_path,
+                key_path=key_path,
+            )
+
+            udp_socket = self._udp_ssl_context.wrap_socket(udp_socket)
+
+        server = self._loop.create_datagram_endpoint(
+            lambda: MercurySyncUDPProtocol(
+                self.read
+            ),
+            sock=udp_socket
+        )
+
+        transport, _ = await server
         self._transport = transport
 
         self._cleanup_task = self._loop.create_task(self._cleanup())
@@ -153,7 +237,7 @@ class MercurySyncUDPConnection:
 
         item = pickle.dumps((
             'request',
-            next(self.id_generator),
+            self.id_generator.generate(),
             event_name,
             data
         ), protocol=pickle.HIGHEST_PROTOCOL)
@@ -191,7 +275,7 @@ class MercurySyncUDPConnection:
 
         item = pickle.dumps((
             'stream',
-            next(self.id_generator),
+            self.id_generator.generate(),
             event_name,
             data
         ), protocol=pickle.HIGHEST_PROTOCOL)
@@ -281,7 +365,6 @@ class MercurySyncUDPConnection:
             )
 
         else:
-
             self.queue[event_name].append((
                 message_type, 
                 shard_id,
@@ -293,10 +376,16 @@ class MercurySyncUDPConnection:
 
             event_waiter = self._waiters[event_name]
 
-
-            if len(event_waiter) > 0:
+            
+            if bool(event_waiter):
                 waiter = event_waiter.pop()
-                waiter.set_result(None)
+                
+                try:
+                    
+                    waiter.set_result(None)
+                
+                except asyncio.InvalidStateError:
+                    pass
 
 
     async def _read(
@@ -310,7 +399,7 @@ class MercurySyncUDPConnection:
         item = pickle.dumps(
             (
                 'response', 
-                next(self.id_generator),
+                self.id_generator.generate(),
                 event_name,
                 response.to_data()
             ),
@@ -333,7 +422,7 @@ class MercurySyncUDPConnection:
             item = pickle.dumps(
                 (
                     'response', 
-                    next(self.id_generator),
+                    self.id_generator.generate(),
                     event_name,
                     response.to_data()
                 ),
@@ -342,25 +431,25 @@ class MercurySyncUDPConnection:
 
             encrypted_message = self._encryptor.encrypt(item)
             compressed = self._compressor.compress(encrypted_message)
-
             self._transport.sendto(compressed, addr)
 
     async def close(self) -> None:
         self._running = False
         
-        self._cleanup_task.cancel()
-        if self._cleanup_task.cancelled() is False:
-            try:
-                self._sleep_task.cancel()
-                if not self._sleep_task.cancelled():
-                    await self._sleep_task
+        if self._cleanup_task:
+            self._cleanup_task.cancel()
+            if self._cleanup_task.cancelled() is False:
+                try:
+                    self._sleep_task.cancel()
+                    if not self._sleep_task.cancelled():
+                        await self._sleep_task
 
-            except asyncio.CancelledError:
-                pass
+                except asyncio.CancelledError:
+                    pass
 
-            try:
+                try:
 
-                await self._cleanup_task
+                    await self._cleanup_task
 
-            except asyncio.CancelledError:
-                pass
+                except asyncio.CancelledError:
+                    pass

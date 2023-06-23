@@ -42,7 +42,9 @@ setup(
     install_requires=[
         'pydantic',
         'python3-dtls',
-        'zstandard'
+        'zstandard',
+        'cryptography',
+        'python-dotenv'
     ],
     python_requires='>=3.10'
 )

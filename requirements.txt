@@ -1,3 +1,5 @@
 pydantic
 python3-dtls
 zstandard
+cryptography
+python-dotenv

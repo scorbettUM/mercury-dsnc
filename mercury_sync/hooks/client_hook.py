@@ -1,6 +1,7 @@
 import functools
 from mercury_sync.service import Service
-from typing import Dict, Tuple, Any, Coroutine
+from mercury_sync.service.controller import Controller
+from typing import Union
 
 
 def client(
@@ -18,7 +19,7 @@ def client(
             *args,
             **kwargs
         ):
-            connection: Service = args[0]
+            connection: Union[Service, Controller] = args[0]
 
             if as_tcp:
                 return await connection.send_tcp(
@@ -31,7 +32,7 @@ def client(
                     call_name,
                     await func(*args, **kwargs)
                 )
-            
+
         return decorator
     
     return wraps
