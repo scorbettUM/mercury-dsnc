@@ -99,6 +99,64 @@ class Monitor(Controller):
         ]
 
     @server()
+    async def update_node_status(
+        self,
+        shard_id: int,
+        healthcheck: HealthCheck
+    ) -> Call[HealthCheck]:
+        
+        source_host = healthcheck.source_host
+        source_port = healthcheck.source_port
+
+        self._node_statuses[(source_host, source_port)] = healthcheck.status
+
+        return HealthCheck(
+            host=source_host,
+            port=source_port,
+            source_host=self.host,
+            source_port=self.port,
+            status=self.status
+        )
+
+    @server()
+    async def update_as_suspect(
+        self,
+        shard_id: int,
+        healthcheck: HealthCheck
+    ) -> Call[HealthCheck]:
+        
+        source_host = healthcheck.source_host
+        source_port = healthcheck.source_port
+
+        target_host = healthcheck.target_host
+        target_port = healthcheck.target_port
+
+        if self.status == 'healthy':
+            self._active_checks_queue.append(
+                asyncio.create_task(
+                    self.push_status_update(
+                        host=target_host,
+                        port=target_port,
+                        health_status=self.status,
+                        error_context=self.error_context
+                    )
+                )
+            )
+
+            self._local_health_multiplier = min(
+                self._local_health_multiplier + 1, 
+                self.max_suspect_multiplier
+            )
+
+        return HealthCheck(
+            host=source_host,
+            port=source_port,
+            source_host=self.host,
+            source_port=self.port,
+            status=self.status
+        )
+
+    @server()
     async def send_indirect_check(
         self,
         shard_id: int,
@@ -179,28 +237,28 @@ class Monitor(Controller):
         shard_id: int,
         healthcheck: HealthCheck
     ) -> Call[HealthCheck]:
-        host = healthcheck.source_host
-        port = healthcheck.source_port
+        source_host = healthcheck.source_host
+        source_port = healthcheck.source_port
 
-        not_self = host != self.host and port != self.port
+        not_self = source_host != self.host and source_port != self.port
         
         if not_self:
 
             suspect_tasks = dict(self._suspect_tasks)
-            suspect_task = suspect_tasks.get((host, port))
+            suspect_task = suspect_tasks.get((source_host, source_port))
 
             if suspect_task:
                 await cancel(suspect_task)
-                del suspect_tasks[(host, port)]
+                del suspect_tasks[(source_host, source_port)]
                 
                 self._suspect_tasks = suspect_tasks
 
-            self._node_statuses[(host, port)] =  'healthy'
+            self._node_statuses[(source_host, source_port)] =  'healthy'
             
             await self.extend_client(
                 HealthCheck(
-                    host=host,
-                    port=port,
+                    host=source_host,
+                    port=source_port,
                     source_host=self.host,
                     source_port=self.port,
                     status=healthcheck.status,
@@ -209,8 +267,8 @@ class Monitor(Controller):
             )
 
         return HealthCheck(
-            host=host,
-            port=port,
+            host=source_host,
+            port=source_port,
             source_host=self.host,
             source_port=self.port,
             error=self.error_context,
@@ -344,29 +402,6 @@ class Monitor(Controller):
                 )
             )
 
-        is_buddy = target_host is None and target_port is None
-
-        # Send our refutation
-        if local_node_status == 'suspect' and healthcheck.status == 'healthy' and is_buddy:
-
-            self._node_statuses[(source_host, source_port)] = 'healthy'
-            source_address = (source_host, source_port)
-            monitoring = [
-                address for address, status in self._node_statuses.items() if status in self._healthy_statuses and address != source_address
-            ]
-
-
-            self._active_checks_queue.extend([
-                asyncio.create_task(
-                    self._run_healthcheck(
-                        host,
-                        port,
-                        target_host=source_host,
-                        target_port=source_port
-                    )
-                ) for host, port in monitoring if host != source_host and port != source_port
-            ])
-
         self._node_statuses[(source_host, source_port)] = healthcheck.status
 
         return HealthCheck(
@@ -374,6 +409,7 @@ class Monitor(Controller):
             port=healthcheck.source_port,
             source_host=self.host,
             source_port=self.port,
+            source_status=local_node_status,
             error=self.error_context,
             status=self.status
         )
@@ -497,6 +533,44 @@ class Monitor(Controller):
             source_port=self.port,
             error=error_context,
             status=health_status
+        )
+    
+    @client('update_node_status')
+    async def push_status_update(
+        self,
+        host: str,
+        port: int,
+        health_status: HealthStatus,
+        error_context: Optional[str]=None
+    ) -> Call[HealthCheck]:
+        return HealthCheck(
+            host=host,
+            port=port,
+            source_host=self.host,
+            source_port=self.port,
+            status=health_status,
+            error=error_context
+        )
+    
+    @client('update_as_suspect')
+    async def push_suspect_update(
+        self,
+        host: str,
+        port: int,
+        target_host: str,
+        target_port: int,
+        health_status: HealthStatus,
+        error_context: Optional[str]=None
+    ) -> Call[HealthCheck]:
+        return HealthCheck(
+            host=host,
+            port=port,
+            target_host=target_host,
+            target_port=target_port,
+            source_host=self.host,
+            source_port=self.port,
+            status=health_status,
+            error=error_context
         )
     
     async def start(self):
@@ -716,6 +790,20 @@ class Monitor(Controller):
         if suspect_count >= len(confirmation_members):
 
             self._node_statuses[(suspect_host, suspect_port)] = 'suspect'
+
+            self._active_checks_queue.append(
+                asyncio.create_task(
+                    self._push_suspect_update(
+                        host=suspect_host,
+                        port=suspect_port,
+                        target_host=suspect_host,
+                        target_port=suspect_port,
+                        health_status=self.status,
+                        error_context=self.error_context
+                    )
+                )
+            )
+
             self._suspect_nodes.append((suspect_host, suspect_port))
 
             self._suspect_tasks[(suspect_host, suspect_port)] = asyncio.create_task(
@@ -923,6 +1011,19 @@ class Monitor(Controller):
         suspicion_timeout = self._calculate_suspicion_timeout(address)
 
         while elapsed < suspicion_timeout and node_status == 'suspect':
+
+            self._active_checks_queue.append(
+                asyncio.create_task(
+                    self._push_suspect_update(
+                        host=suspect_host,
+                        port=suspect_port,
+                        target_host=suspect_host,
+                        target_port=suspect_port,
+                        health_status=self.status,
+                        error_context=self.error_context
+                    )
+                )
+            )
                 
             confirmation_members = self._get_confirmation_members()
 
@@ -985,6 +1086,32 @@ class Monitor(Controller):
                     suspect_host,
                     suspect_port
                 )
+            
+    async def _push_suspect_update(
+        self,
+        host: str,
+        port: int,
+        target_host: str,
+        target_port: int,
+        health_status: HealthStatus,
+        error_context: Optional[str]=None
+    ):
+        
+        try:
+            await asyncio.wait_for(
+                self.push_suspect_update(
+                    host=host,
+                    port=port,
+                    target_host=target_host,
+                    target_port=target_port,
+                    health_status=health_status,
+                    error_context=error_context
+                ),
+                timeout=self._poll_timeout * (self._local_health_multiplier + 1)
+            )
+
+        except asyncio.TimeoutError:
+            pass
 
     async def cleanup_pending_checks(self):
 

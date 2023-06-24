@@ -20,4 +20,5 @@ class HealthCheck(Message):
     target_status: Optional[StrictStr]
     source_host: StrictStr
     source_port: StrictInt
+    source_status: Optional[StrictStr]
     status: HealthStatus
