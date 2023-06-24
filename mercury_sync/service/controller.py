@@ -447,6 +447,10 @@ class Controller:
                 key_path=key_path
             )
 
+            await tcp_connection.connect_async(
+                cert_path=cert_path,
+                key_path=key_path
+            )
 
             await self._udp_queue[(remote.host, remote.port)].put(udp_connection)
             await self._tcp_queue[(remote.host, remote.port)].put(tcp_connection)
@@ -466,10 +470,10 @@ class Controller:
             remote_pool
         ):
             await tcp_connection.connect_client(
-                    (remote_copy.host, remote_copy.port + 1),
-                    cert_path=cert_path,
-                    key_path=key_path
-                )
+                (remote_copy.host, remote_copy.port + 1),
+                cert_path=cert_path,
+                key_path=key_path
+            )
             
         self._udp_pool.extend(udp_pool)
         self._tcp_pool.extend(tcp_pool)
@@ -551,7 +555,6 @@ class Controller:
         event_name: str,
         message: Message
     ):
-
         connection: MercurySyncTCPConnection = await self._tcp_queue[(message.host, message.port)].get()
         (host, port) = self._host_map.get(message.__class__.__name__).get(connection)
         address = (

@@ -168,7 +168,17 @@ class MercurySyncTCPConnection:
         if self.connected is False and worker_socket is None:
             self._server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self._server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self._server_socket.bind((self.host, self.port))
+
+            while True:
+
+                try:
+
+                    self._server_socket.bind((self.host, self.port))
+                    break
+
+                except Exception:
+                    self.port += 1
+ 
 
             self._server_socket
 
@@ -298,11 +308,19 @@ class MercurySyncTCPConnection:
             self._last_call.append(event_name)
 
             client_transport = self._client_transports.get(address)
+            if client_transport is None:
+                await self.connect_client(
+                    address,
+                    cert_path=self._client_cert_path,
+                    key_path=self._client_key_path
+                )
+
+                client_transport = self._client_transports.get(address)
 
             item = pickle.dumps(
                 (
                     'request',
-                    next(self.id_generator),
+                    self.id_generator.generate(),
                     event_name,
                     data,
                     self.host,
@@ -352,7 +370,7 @@ class MercurySyncTCPConnection:
                 item = pickle.dumps(
                     (
                         'stream_connect',
-                        next(self.id_generator),
+                        self.id_generator.generate(),
                         event_name,
                         data,
                         self.host,
@@ -366,7 +384,7 @@ class MercurySyncTCPConnection:
                 item = pickle.dumps(
                     (
                         'stream',
-                        next(self.id_generator),
+                        self.id_generator.generate(),
                         event_name,
                         data,
                         self.host,
@@ -394,7 +412,7 @@ class MercurySyncTCPConnection:
                 item = pickle.dumps(
                     (
                         'stream',
-                        next(self.id_generator),
+                        self.id_generator.generate(),
                         event_name,
                         data,
                         self.host,
@@ -609,7 +627,7 @@ class MercurySyncTCPConnection:
         item = pickle.dumps(
             (
                 'response', 
-                next(self.id_generator),
+                self.id_generator.generate(),
                 event_name,
                 response.to_data(), 
                 self.host,
@@ -634,7 +652,7 @@ class MercurySyncTCPConnection:
             item = pickle.dumps(
                 (
                     'response', 
-                    next(self.id_generator),
+                    self.id_generator.generate(),
                     event_name,
                     response.to_data(), 
                     self.host,
@@ -657,7 +675,7 @@ class MercurySyncTCPConnection:
         item = pickle.dumps(
             (
                 'response', 
-                next(self.id_generator),
+                self.id_generator.generate(),
                 event_name,
                 message.to_data(), 
                 self.host,
@@ -684,7 +702,7 @@ class MercurySyncTCPConnection:
         item = pickle.dumps(
             (
                 'response', 
-                next(self.id_generator),
+                self.id_generator.generate(),
                 None,
                 error.to_data(), 
                 self.host,

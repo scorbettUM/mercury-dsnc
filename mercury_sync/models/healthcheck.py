@@ -10,9 +10,9 @@ HealthStatus = Literal[
     "initializing",
     "healthy", 
     "suspect", 
-    "errored", 
-    "removed", 
-    "non-responsive"
+    "degraded", 
+    "investigating",
+    "removed"
 ]
 
 class HealthCheck(Message):
