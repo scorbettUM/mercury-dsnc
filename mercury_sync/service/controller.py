@@ -24,10 +24,8 @@ from typing import (
     get_args,
     Callable,
     AsyncIterable,
-    Tuple,
-    Deque
+    Tuple
 )
-from .service import Service
 
 
 def handle_worker_loop_stop(signame, loop: asyncio.AbstractEventLoop):
@@ -501,6 +499,25 @@ class Controller:
             cert_path=cert_path,
             key_path=key_path
         )
+    
+    async def remove_clients(
+        self,
+        remote: Message 
+    ):
+        
+        existing_udp_connections = self._udp_queue[(remote.host, remote.port)]
+        existing_tcp_connections = self._tcp_queue[(remote.host, remote.port)]
+
+        while existing_udp_connections.empty() is False:
+            connection: MercurySyncUDPConnection = await existing_udp_connections.get()
+            await connection.close()
+
+        while existing_tcp_connections.empty() is False:
+            connection: MercurySyncUDPConnection = await existing_tcp_connections.get()
+            await connection.close()
+
+        del self._udp_queue[(remote.host, remote.port)]
+        del self._tcp_queue[(remote.host, remote.port)]
 
     async def send(
         self,
