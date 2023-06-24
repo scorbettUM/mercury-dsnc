@@ -11,14 +11,13 @@ HealthStatus = Literal[
     "healthy", 
     "suspect", 
     "degraded", 
-    "investigating",
-    "removed"
+    "failed"
 ]
 
 class HealthCheck(Message):
     target_host: Optional[StrictStr]
     target_port: Optional[StrictInt]
-    shard_ids: Optional[List[StrictInt]]
+    target_status: Optional[StrictStr]
     source_host: StrictStr
     source_port: StrictInt
     status: HealthStatus
