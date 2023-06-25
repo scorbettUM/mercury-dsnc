@@ -81,6 +81,7 @@ class MercurySyncTCPConnection:
         self._sleep_task: Union[asyncio.Task, None] = None
         self._cleanup_interval = TimeParser(env.MERCURY_SYNC_CLEANUP_INTERVAL).time
         self._max_concurrency = env.MERCURY_SYNC_MAX_CONCURRENCY
+        self._tcp_connect_retries = env.MERCURY_SYNC_TCP_CONNECT_RETRIES
 
     def connect(
         self,
@@ -246,17 +247,31 @@ class MercurySyncTCPConnection:
 
         tcp_socket.setblocking(False)
 
-        client_transport, _ = await self._loop.create_connection(
-            lambda: MercurySyncTCPClientProtocol(
-                self.read
-            ),
-            sock=tcp_socket,
-            ssl=self._client_ssl_context
-        )
+        last_error: Union[Exception, None] = None
 
-        self._client_transports[address] = client_transport
+        for _ in range(self._tcp_connect_retries):
 
-        return client_transport
+            try:
+
+                client_transport, _ = await self._loop.create_connection(
+                    lambda: MercurySyncTCPClientProtocol(
+                        self.read
+                    ),
+                    sock=tcp_socket,
+                    ssl=self._client_ssl_context
+                )
+
+                self._client_transports[address] = client_transport
+
+                return client_transport
+            
+            except ConnectionRefusedError as connection_error:
+                last_error = connection_error
+
+            await asyncio.sleep(1)
+
+        if last_error:
+            raise last_error
     
     def _create_client_ssl_context(
         self, 

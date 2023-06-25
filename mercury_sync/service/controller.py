@@ -520,8 +520,12 @@ class Controller:
             connection: MercurySyncUDPConnection = await existing_tcp_connections.get()
             await connection.close()
 
-        del self._udp_queue[(remote.host, remote.port)]
-        del self._tcp_queue[(remote.host, remote.port)]
+        if self._udp_queue.get((remote.host, remote.port)):
+            del self._udp_queue[(remote.host, remote.port)]
+
+        
+        if self._tcp_queue.get((remote.host, remote.port)):
+            del self._tcp_queue[(remote.host, remote.port)]
 
     async def send(
         self,
