@@ -169,16 +169,12 @@ class MercurySyncTCPConnection:
             self._server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self._server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
-            while True:
+            try:
+                self._server_socket.bind((self.host, self.port))
 
-                try:
+            except Exception:
+                pass
 
-                    self._server_socket.bind((self.host, self.port))
-                    break
-
-                except Exception:
-                    self.port += 1
- 
 
             self._server_socket
 

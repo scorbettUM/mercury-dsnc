@@ -8,6 +8,7 @@ from .message import Message
 
 HealthStatus = Literal[
     "initializing",
+    "waiting",
     "healthy", 
     "suspect", 
     "degraded", 

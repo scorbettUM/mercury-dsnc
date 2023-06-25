@@ -74,8 +74,7 @@ class Monitor(Controller):
         self.min_suspect_multiplier = env.MERCURY_SYNC_MIN_SUSPECT_TIMEOUT_MULTIPLIER
         self.max_suspect_multiplier = env.MERCURY_SYNC_MAX_SUSPECT_TIMEOUT_MULTIPLIER 
         self._min_suspect_node_count = env.MERCURY_SYNC_MIN_SUSPECT_NODES_THRESHOLD
-        self._local_health_multiplier = self.max_suspect_multiplier
-
+        self._local_health_multiplier = 0
         self._local_health_monitor: Optional[asyncio.Task] = None
         self._confirmed_suspicions: Dict[Tuple[str, int], int] = {}
         self._waiter: Optional[asyncio.Future] = None
@@ -89,6 +88,7 @@ class Monitor(Controller):
         self._investigating_nodes: Dict[Tuple[str, int], Dict[Tuple[str, int]]] = defaultdict(dict)
         self._node_statuses: Dict[Tuple[str, int], HealthStatus] = {}
         self._healthy_statuses = [
+            'waiting',
             'healthy'
         ]
 
@@ -105,10 +105,14 @@ class Monitor(Controller):
         healthcheck: HealthCheck
     ) -> Call[HealthCheck]:
         
+    
         source_host = healthcheck.source_host
         source_port = healthcheck.source_port
+        
 
-        self._node_statuses[(source_host, source_port)] = healthcheck.status
+        if source_host != self.host and source_port != self.port:
+
+            self._node_statuses[(source_host, source_port)] = healthcheck.status
 
         return HealthCheck(
             host=source_host,
@@ -253,18 +257,37 @@ class Monitor(Controller):
                 
                 self._suspect_tasks = suspect_tasks
 
-            self._node_statuses[(source_host, source_port)] =  'healthy'
+
+            local_node_status = self._node_statuses.get((source_host, source_port))
+
+            if local_node_status is None:
             
-            await self.extend_client(
-                HealthCheck(
-                    host=source_host,
-                    port=source_port,
-                    source_host=self.host,
-                    source_port=self.port,
-                    status=healthcheck.status,
-                    error=healthcheck.error
+                await self.extend_client(
+                    HealthCheck(
+                        host=source_host,
+                        port=source_port,
+                        source_host=self.host,
+                        source_port=self.port,
+                        status=healthcheck.status,
+                        error=healthcheck.error
+                    )
                 )
-            )
+
+            else:
+
+                await self.refresh_clients(
+                    HealthCheck(
+                        host=source_host,
+                        port=source_port,
+                        source_host=self.host,
+                        source_port=self.port,
+                        status=healthcheck.status,
+                        error=healthcheck.error
+                    )
+                )
+            
+
+            self._node_statuses[(source_host, source_port)] =  'healthy'
 
         return HealthCheck(
             host=source_host,
@@ -325,30 +348,6 @@ class Monitor(Controller):
 
             self._suspect_tasks = suspect_tasks
 
-            
-        if healthcheck.target_status == 'suspect' or healthcheck.target_status == 'degraded':
-
-            self._local_health_multiplier = min(
-                self._local_health_multiplier + 1,
-                self.max_suspect_multiplier
-            )
-
-            monitoring = [
-                address for address, status in self._node_statuses.items() if status in self._healthy_statuses
-            ]
-
-            # Send our refutation
-            self._active_checks_queue.extend([
-                asyncio.create_task(
-                    self._run_healthcheck(
-                        host,
-                        port,
-                        target_host=healthcheck.target_host,
-                        target_port=healthcheck.target_port
-                    )
-                ) for host, port in monitoring
-            ])
-
         status_unhealthy = local_node_status == 'failed' or local_node_status == 'suspect'
             
         if local_node_status is None or status_unhealthy:
@@ -365,15 +364,6 @@ class Monitor(Controller):
                     source_port,
                     healthcheck.status,
                     error_context=healthcheck.error
-                ) for host, port in monitoring
-            ])
-
-            self._active_checks_queue.extend([
-                asyncio.create_task(
-                    self._run_healthcheck(
-                        host,
-                        port,
-                    )
                 ) for host, port in monitoring
             ])
 
@@ -621,14 +611,14 @@ class Monitor(Controller):
 
         return round(
             self.min_suspect_multiplier * math.log10(nodes_count) * self._poll_interval,
-            2
+            4
         )
 
     def _calculate_max_suspect_timeout(self, min_suspect_timeout: float):
         
         return round(
             self.max_suspect_multiplier * min_suspect_timeout,
-            2
+            4
         )
 
     def _calculate_suspicion_timeout(
@@ -963,9 +953,10 @@ class Monitor(Controller):
             host: Union[str, None] = None
             port: Union[int, None] = None
 
-            if len(monitors) > 0:
+            monitors_count = len(monitors)
 
-                monitors_count = len(monitors)
+            if monitors_count > 0:
+
                 monitor_idx = monitor_idx%monitors_count
                 host, port = monitors[monitor_idx]
 
@@ -980,8 +971,11 @@ class Monitor(Controller):
                     )
                 )
 
-            if monitor_idx%monitors_count == 0:
+            if monitors_count > 0 and monitor_idx%monitors_count == 0:
                 self.status = 'healthy'
+
+            elif monitors_count < 1:
+                self.status = 'waiting'
 
             monitor_idx += 1
 
