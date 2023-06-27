@@ -465,7 +465,7 @@ class Monitor(Controller):
 
                 return shard_id, healthcheck
 
-            except asyncio.TimeoutError:
+            except (asyncio.TimeoutError, RuntimeError):
                 self._local_health_multiplier = min(
                     self._local_health_multiplier, 
                     self._max_poll_multiplier
@@ -1079,7 +1079,7 @@ class Monitor(Controller):
                         )
                     )
                 )
-
+                
             await asyncio.sleep(
                 self._poll_interval * (self._local_health_multiplier + 1)
             )
