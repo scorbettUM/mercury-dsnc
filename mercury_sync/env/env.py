@@ -15,12 +15,15 @@ PrimaryType = Union[str, int, float, bytes, bool]
 
 
 class Env(BaseModel):
+    MERCURY_SYNC_UDP_SYNC_INTERVAL: StrictStr='5s'
     MERCURY_SYNC_TCP_CONNECT_RETRIES: StrictInt=3
     MERCURY_SYNC_BOOT_WAIT: StrictStr='3s'
     MERCURY_SYNC_MAX_TIME_IDLE: StrictStr='10s'
     MERCURY_SYNC_IDLE_REBOOT_TIMEOUT: StrictStr='10s'
+    MERCURY_SYNC_POLL_RETRIES: StrictInt=3
     MERCURY_SYNC_MIN_SUSPECT_NODES_THRESHOLD=3
-    MERCURY_SYNC_MIN_SUSPECT_TIMEOUT_MULTIPLIER: StrictInt=2
+    MERCURY_SYNC_MAX_POLL_MULTIPLIER: StrictInt=5
+    MERCURY_SYNC_MIN_SUSPECT_TIMEOUT_MULTIPLIER: StrictInt=4
     MERCURY_SYNC_MAX_SUSPECT_TIMEOUT_MULTIPLIER: StrictInt=7
     MERCURY_SYNC_INITIAL_NODES_COUNT: StrictInt=3
     MERCURY_SYNC_HEALTH_CHECK_TIMEOUT: StrictStr='0.2s'
@@ -34,6 +37,9 @@ class Env(BaseModel):
     @classmethod
     def types_map(self) -> Dict[str, Callable[[str], PrimaryType]]:
         return {
+            'MERCURY_SYNC_UDP_SYNC_INTERVAL': str,
+            'MERCURY_SYNC_POLL_RETRIES': int,
+            'MERCURY_SYNC_MAX_POLL_MULTIPLIER': int,
             'MERCURY_SYNC_TCP_CONNECT_RETRIES': int,
             'MERCURY_SYNC_MAX_TIME_IDLE': str,
             'MERCURY_SYNC_IDLE_REBOOT_TIMEOUT': str,

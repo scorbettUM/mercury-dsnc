@@ -69,6 +69,7 @@ class MercurySyncUDPConnection:
         self._sleep_task: Union[asyncio.Task, None] = None
         self._cleanup_interval = TimeParser(env.MERCURY_SYNC_CLEANUP_INTERVAL).time
         self._max_concurrency = env.MERCURY_SYNC_MAX_CONCURRENCY
+        self.udp_socket: Union[socket.socket, None] = None
 
     def connect(
         self, 
@@ -93,17 +94,17 @@ class MercurySyncUDPConnection:
         self._decompressor = zstandard.ZstdDecompressor()
 
         if worker_socket is None:
-            udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-            udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            udp_socket.bind((
+            self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+            self.udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.udp_socket.bind((
                 self.host,
                 self.port
             ))
 
-            udp_socket.setblocking(False)
+            self.udp_socket.setblocking(False)
 
         else:
-            udp_socket = worker_socket
+            self.udp_socket = worker_socket
 
 
         if cert_path and key_path:
@@ -112,13 +113,13 @@ class MercurySyncUDPConnection:
                 key_path=key_path,
             )
 
-            udp_socket = self._udp_ssl_context.wrap_socket(udp_socket)
+            self.udp_socket = self._udp_ssl_context.wrap_socket(self.udp_socket)
 
         server = self._loop.create_datagram_endpoint(
             lambda: MercurySyncUDPProtocol(
                 self.read
             ),
-            sock=udp_socket
+            sock=self.udp_socket
         )
 
         transport, _ = self._loop.run_until_complete(server)
@@ -158,17 +159,17 @@ class MercurySyncUDPConnection:
         self._decompressor = zstandard.ZstdDecompressor()
 
         if worker_socket is None:
-            udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-            udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            udp_socket.bind((
+            self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+            self.udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.udp_socket.bind((
                 self.host,
                 self.port
             ))
 
-            udp_socket.setblocking(False)
+            self.udp_socket.setblocking(False)
 
         else:
-            udp_socket = worker_socket
+            self.udp_socket = worker_socket
 
 
         if cert_path and key_path:
@@ -177,13 +178,13 @@ class MercurySyncUDPConnection:
                 key_path=key_path,
             )
 
-            udp_socket = self._udp_ssl_context.wrap_socket(udp_socket)
+            self.udp_socket = self._udp_ssl_context.wrap_socket(self.udp_socket)
 
         server = self._loop.create_datagram_endpoint(
             lambda: MercurySyncUDPProtocol(
                 self.read
             ),
-            sock=udp_socket
+            sock=self.udp_socket
         )
 
         transport, _ = await server
@@ -226,6 +227,23 @@ class MercurySyncUDPConnection:
 
             for pending in list(self._pending_responses):
                 if pending.done() or pending.cancelled():
+                    try:
+                        await pending
+
+                    except (
+                        ConnectionAbortedError,
+                        ConnectionRefusedError,
+                        ConnectionResetError,
+                        asyncio.CancelledError,
+                        asyncio.InvalidStateError
+                    ):
+                        await self.close()
+                        await self.connect_async(
+                            cert_path=self._udp_cert_path,
+                            key_path=self._udp_key_path
+                        )
+                    
+
                     self._pending_responses.pop()
     
     async def send(
@@ -435,6 +453,7 @@ class MercurySyncUDPConnection:
 
     async def close(self) -> None:
         self._running = False
+        self._transport.abort()
         
         if self._cleanup_task:
             self._cleanup_task.cancel()

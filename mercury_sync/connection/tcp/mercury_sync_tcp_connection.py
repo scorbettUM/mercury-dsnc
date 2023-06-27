@@ -306,6 +306,24 @@ class MercurySyncTCPConnection:
 
             for pending in list(self._pending_responses):
                 if pending.done() or pending.cancelled():
+
+                    try:
+                        await pending
+
+                    except (
+                        ConnectionAbortedError,
+                        ConnectionRefusedError,
+                        ConnectionResetError,
+                        asyncio.CancelledError,
+                        asyncio.InvalidStateError,
+                        RuntimeError
+                    ):
+                        await self.close()
+                        await self.connect_async(
+                            cert_path=self._client_cert_path,
+                            key_path=self._client_key_path
+                        )
+
                     self._pending_responses.pop()
 
     async def send(
@@ -730,6 +748,9 @@ class MercurySyncTCPConnection:
     async def close(self) -> None:
         self._stream = False
         self._running = False
+
+        for client in self._client_transports.values():\
+            client.abort()
         
         if self._cleanup_task:
             self._cleanup_task.cancel()

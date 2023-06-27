@@ -11,15 +11,15 @@ HealthStatus = Literal[
     "waiting",
     "healthy", 
     "suspect", 
-    "degraded", 
     "failed"
 ]
 
 class HealthCheck(Message):
     target_host: Optional[StrictStr]
     target_port: Optional[StrictInt]
-    target_status: Optional[StrictStr]
+    target_status: Optional[HealthStatus]
+    target_last_updated: Optional[StrictInt]
     source_host: StrictStr
     source_port: StrictInt
-    source_status: Optional[StrictStr]
+    source_status: Optional[HealthStatus]
     status: HealthStatus

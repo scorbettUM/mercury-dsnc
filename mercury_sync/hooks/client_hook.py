@@ -6,7 +6,8 @@ from typing import Union
 
 def client(
     call_name: str, 
-    as_tcp: bool=False
+    as_tcp: bool=False,
+    retries: int=3
 ):
 
     def wraps(func):
