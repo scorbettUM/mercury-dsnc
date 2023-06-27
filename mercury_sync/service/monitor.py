@@ -1079,7 +1079,7 @@ class Monitor(Controller):
                         )
                     )
                 )
-                
+
             await asyncio.sleep(
                 self._poll_interval * (self._local_health_multiplier + 1)
             )
