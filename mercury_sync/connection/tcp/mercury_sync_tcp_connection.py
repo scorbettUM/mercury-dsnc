@@ -749,7 +749,7 @@ class MercurySyncTCPConnection:
         self._stream = False
         self._running = False
 
-        for client in self._client_transports.values():\
+        for client in self._client_transports.values():
             client.abort()
         
         if self._cleanup_task:
