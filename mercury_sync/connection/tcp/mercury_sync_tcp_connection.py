@@ -1,6 +1,5 @@
 
 import asyncio
-import errno
 import pickle
 import socket
 import ssl
@@ -310,14 +309,7 @@ class MercurySyncTCPConnection:
                     try:
                         await pending
 
-                    except (
-                        ConnectionAbortedError,
-                        ConnectionRefusedError,
-                        ConnectionResetError,
-                        asyncio.CancelledError,
-                        asyncio.InvalidStateError,
-                        RuntimeError
-                    ):
+                    except Exception:
                         await self.close()
                         await self.connect_async(
                             cert_path=self._client_cert_path,
