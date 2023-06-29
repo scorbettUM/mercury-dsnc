@@ -4,11 +4,15 @@ Cache module.
 
 import json
 import os
+from urllib import request
 from pathlib import Path
 
-from .. import types
-from ..record import Record, create_rdata
-from ..util import logger
+from mercury_sync.service_discovery.dns.core.record import (
+    Record,
+    RecordType,
+    RecordTypesMap
+)
+
 
 __all__ = [
     'core_config',
@@ -24,8 +28,9 @@ CACHE_FILE = os.path.join(CONFIG_DIR, 'named.cache.txt')
 try:
     with open(os.path.join(CONFIG_DIR, 'config.json')) as f:
         user_config = json.load(f)
-except:
+except Exception:
     user_config = None
+
 core_config = {
     'default_nameservers': [
         '8.8.8.8',
@@ -41,18 +46,18 @@ def get_nameservers():
     return []
 
 
-def get_name_cache(url='ftp://rs.internic.net/domain/named.cache',
-                   filename=CACHE_FILE,
-                   timeout=10):
-    '''
-    Download root nameservers and save cache.
-    '''
-    from urllib import request
-    logger.info('Fetching named.cache...')
+def get_name_cache(
+    url='ftp://rs.internic.net/domain/named.cache',
+    filename=CACHE_FILE,
+    timeout=10
+):
+
     try:
         res = request.urlopen(url, timeout=timeout)
-    except:
-        logger.warning('Error fetching named.cache')
+
+    except Exception:
+        pass
+
     else:
         with open(filename, 'wb') as f:
             f.write(res.read())
@@ -74,10 +79,13 @@ def get_root_servers(filename=CACHE_FILE):
         if len(parts) < 4:
             continue
         name = parts[0].rstrip('.')
+
+        types_map = RecordTypesMap()
         # parts[1] (expires) is ignored
-        qtype = types.get_code(parts[2], 0)
+        qtype = types_map.types_by_code.get(parts[2], RecordType.NONE)
+
         data_str = parts[3].rstrip('.')
-        data = create_rdata(qtype, data_str)
+        data = Record.create_rdata(qtype, data_str)
         yield Record(
             name=name,
             qtype=qtype,

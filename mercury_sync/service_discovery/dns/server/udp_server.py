@@ -4,6 +4,7 @@ import socket
 import zstandard
 from mercury_sync.connection.udp import MercurySyncUDPConnection
 from mercury_sync.env import Env
+from mercury_sync.service_discovery.dns.server.entries import DNSEntry
 from typing import Union, List, Optional
 from .handlers import UDPHandler
 
@@ -12,26 +13,29 @@ class UDPServer(MercurySyncUDPConnection):
     def __init__(
         self,
         host: str,
-        port: int,
         dns_port: int,
         instance_id: int,
         env: Env,
+        entries: List[DNSEntry]=[],
         proxy_servers: Optional[List[str]]=None
     ):
         super().__init__(
             host,
-            port,
+            dns_port,
             instance_id,
             env
         )
 
         self.handler = UDPHandler(
+            host,
+            dns_port,
+            env,
+            entries,
             proxy_servers=proxy_servers
         )
 
         self._server: Union[asyncio.DatagramTransport, None] = None
         self._loop: Union[asyncio.AbstractEventLoop, None] = None
-        self.dns_port = port
 
     async def start_dns_server(
         self, 
@@ -39,6 +43,9 @@ class UDPServer(MercurySyncUDPConnection):
         key_path: Optional[str]=None,
         worker_socket: Optional[socket.socket]=None
     ) -> None:
+        
+
+        self.handler.initialize()
         
         self._loop = asyncio.get_event_loop()
         self._running = True
@@ -53,7 +60,7 @@ class UDPServer(MercurySyncUDPConnection):
             self.udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self.udp_socket.bind((
                 self.host,
-                self.dns_port
+                self.port
             ))
 
             self.udp_socket.setblocking(False)

@@ -1,4 +1,4 @@
-from .server import (
-    TCPServer,
-    UDPServer
+from .dns_service import (
+    DNSService, 
+    DNSEntry
 )

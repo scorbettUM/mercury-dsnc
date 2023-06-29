@@ -4,6 +4,7 @@ import socket
 import zstandard
 from mercury_sync.connection.tcp import MercurySyncTCPConnection
 from mercury_sync.env import Env
+from mercury_sync.service_discovery.dns.server.entries import DNSEntry
 from typing import Union, List, Optional
 from .handlers import TCPHandler
 
@@ -12,25 +13,29 @@ class TCPServer(MercurySyncTCPConnection):
     def __init__(
         self,
         host: str,
-        port: int,
         dns_port: int,
         instance_id: int,
         env: Env,
+        entries: List[DNSEntry]=[],
         proxy_servers: Optional[List[str]]=None
     ):
         super().__init__(
             host,
-            port,
+            dns_port,
             instance_id,
             env
         )
 
         self.handler = TCPHandler(
+            host,
+            dns_port,
+            env,
+            entries,
             proxy_servers=proxy_servers
         )
 
         self._server: Union[asyncio.Server, None] = None
-        self.dns_port = dns_port
+        self._waiter: Union[asyncio.Future, None] = None
 
     async def start_dns_server(
         self,
@@ -46,6 +51,8 @@ class TCPServer(MercurySyncTCPConnection):
         except Exception:
             self._loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self._loop)
+
+        self.handler.initialize()
 
         self._running = True
         self._semaphore = asyncio.Semaphore(self._max_concurrency)
@@ -69,9 +76,6 @@ class TCPServer(MercurySyncTCPConnection):
             except Exception:
                 pass
 
-
-            self._server_socket
-
             self._server_socket.setblocking(False)
 
         elif self.connected is False:
@@ -92,3 +96,5 @@ class TCPServer(MercurySyncTCPConnection):
             self.connected = True
 
             self._cleanup_task = self._loop.create_task(self._cleanup())
+
+    

@@ -1,2 +1,2 @@
-from .tcp_server import TCPServer
-from .udp_server import UDPServer
+from .server import DNSServer
+from .entries import DNSEntry

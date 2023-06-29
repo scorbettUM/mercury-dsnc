@@ -2,7 +2,7 @@ from pydantic import (
     StrictStr,
     StrictInt
 )
-from typing import Literal, Optional, List
+from typing import Literal, Optional
 from .message import Message
 
 
