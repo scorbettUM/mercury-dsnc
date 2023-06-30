@@ -125,8 +125,18 @@ class RecursiveResolver(BaseResolver):
             ]
         )
 
-    async def _query(self, fqdn: str, qtype: int):
-        return await self._query_tick(fqdn, qtype, self.max_tick)
+    async def _query(
+        self, 
+        fqdn: str, 
+        qtype: int,
+        skip_cache: bool=False
+    ):
+        return await self._query_tick(
+            fqdn, 
+            qtype, 
+            self.max_tick,
+            skip_cache
+        )
 
     def _get_nameservers(self, fqdn: str):
         '''Return a generator of parent domains'''
@@ -166,18 +176,25 @@ class RecursiveResolver(BaseResolver):
             nameservers=hosts
         )
 
-    @memoizer.memoize_async(lambda _, fqdn, qtype, _tick: (fqdn, qtype))
+    @memoizer.memoize_async(
+        lambda _, fqdn, qtype, _tick, skip_cache: (fqdn, qtype)
+    )
     async def _query_tick(
         self, 
         fqdn: str, 
         qtype: int,
-        tick: int
+        tick: int,
+        skip_cache: bool
     ) -> Tuple[DNSMessage, bool]:
         msg = DNSMessage()
         msg.qd.append(Record(REQUEST, name=fqdn, qtype=qtype))
 
-        has_result, fqdn = self.query_cache(msg, fqdn, qtype)
-        from_cache = has_result
+        has_result = False
+        from_cache = False
+
+        if skip_cache is False:
+            has_result, fqdn = self.query_cache(msg, fqdn, qtype)
+            from_cache = has_result
 
         last_err = None
         nameservers = self._get_nameservers(fqdn)

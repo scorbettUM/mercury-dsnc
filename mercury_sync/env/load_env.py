@@ -5,6 +5,7 @@ from typing import (
     Union, 
     Callable
 )
+from .registrar_env import RegistrarEnv
 from .env import Env
 
 
@@ -19,8 +20,10 @@ def load_env(
             PrimaryType
         ]
     ],  
-    env_file: str=None   
-):
+    env_file: str=None,
+    env_type: Union[RegistrarEnv, Env]=Env 
+) -> Union[RegistrarEnv, Env]:
+    
     if env_file is None:
         env_file = '.env'
 
@@ -41,6 +44,6 @@ def load_env(
 
         values.update(env_file_values)
 
-    return Env(**{
+    return env_type(**{
         name: value for name, value in values.items() if value is not None
     })

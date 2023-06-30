@@ -84,11 +84,13 @@ class DNSService(Controller):
     async def query(
         self,
         domain_name: str,
-        record_type: Literal["A", "AAAA", "CNAME", "TXT"]="A"
+        record_type: Literal["A", "AAAA", "CNAME", "TXT"]="A",
+        skip_cache: bool=False
     ):
         return await self.resolver.query(
             domain_name,
-            record_type
+            record_type,
+            skip_cache=skip_cache
         )
     
     async def register(

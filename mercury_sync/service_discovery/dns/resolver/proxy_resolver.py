@@ -169,9 +169,14 @@ class ProxyResolver(BaseResolver):
         return ns_pairs
 
     @memoizer.memoize_async(
-            lambda _, fqdn, qtype: (fqdn, qtype)
+            lambda _, fqdn, qtype, skip_cache: (fqdn, qtype)
     )
-    async def _query(self, fqdn: str, qtype: RecordType):
+    async def _query(
+        self, 
+        fqdn: str, 
+        qtype: RecordType,
+        skip_cache: bool
+    ):
 
         msg = DNSMessage()
         msg.qd.append(
@@ -182,8 +187,12 @@ class ProxyResolver(BaseResolver):
             )
         )
 
-        has_result, fqdn = self.query_cache(msg, fqdn, qtype)
-        from_cache = has_result
+        has_result = False
+        from_cache = False
+
+        if skip_cache is False:
+            has_result, fqdn = self.query_cache(msg, fqdn, qtype)
+            from_cache = has_result
 
         while not has_result:
             nameservers = self._get_nameservers(fqdn)

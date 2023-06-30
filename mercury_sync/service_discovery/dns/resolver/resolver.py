@@ -76,7 +76,8 @@ class DNSResolver:
     async def query(
         self,
         domain_name: str,
-        record_type: Literal["A", "AAAA", "CNAME", "TXT"]
+        record_type: Literal["A", "AAAA", "CNAME", "TXT"],
+        skip_cache: bool=False
     ):
         
         record_type = self.types_map.types_by_name.get(
@@ -85,5 +86,6 @@ class DNSResolver:
 
         return await self.resolver.query(
             domain_name,
-            qtype=record_type
+            qtype=record_type,
+            skip_cache=skip_cache
         )

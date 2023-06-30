@@ -59,7 +59,8 @@ class BaseResolver:
     async def query(
         self,
         fqdn: str,
-        qtype: RecordType=RecordType.ANY
+        qtype: RecordType=RecordType.ANY,
+        skip_cache: bool=False
     ) -> Tuple[DNSMessage, bool]:
         
         if fqdn.endswith('.'):
@@ -83,7 +84,8 @@ class BaseResolver:
         return await asyncio.wait_for(
             self._query(
                 fqdn, 
-                qtype
+                qtype,
+                skip_cache
             ),
             timeout=self.query_timeout
         )
