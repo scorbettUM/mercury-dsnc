@@ -136,8 +136,22 @@ class DNSRegistrarService(Controller):
     async def query(
         self,
         domain_name: str,
-        record_type: Literal["A", "AAAA", "CNAME", "SRV", "TXT"]="SRV",
-        domain_types: List[Literal["_udp", "_tcp", "_http"]]=["_udp"],
+        record_type: Literal[
+            "A", 
+            "AAAA", 
+            "CNAME", 
+            "SRV", 
+            "TXT"
+        ]="SRV",
+        domain_types: List[
+            Literal[
+                "_udp", 
+                "_tcp", 
+                "_tcps", 
+                "_http", 
+                "_https"
+            ]
+        ]=["_udp"],
         skip_cache: bool=False
     ):
         
@@ -155,8 +169,22 @@ class DNSRegistrarService(Controller):
         self,
         host: str,
         port: int,
-        record_type: Literal["A", "AAAA", "CNAME", "SRV", "TXT"]="SRV",
-        domain_types: List[Literal["_udp", "_tcp", "_http"]]=["_udp"],
+        record_type: Literal[
+            "A", 
+            "AAAA", 
+            "CNAME", 
+            "SRV", 
+            "TXT"
+        ]="SRV",
+        domain_types: List[
+            Literal[
+                "_udp", 
+                "_tcp", 
+                "_tcps", 
+                "_http", 
+                "_https"
+            ]
+        ]=["_udp"]
     ):
         known_nodes_count = len(self._known_nodes)
         known_node = self._known_nodes.get((host, port))
@@ -201,8 +229,22 @@ class DNSRegistrarService(Controller):
         self,
         host: str,
         port: int,
-        record_type: Literal["A", "AAAA", "CNAME", "SRV", "TXT"]="SRV",
-        domain_types: List[Literal["_udp", "_tcp", "_http"]]=["_udp"],
+        record_type: Literal[
+            "A", 
+            "AAAA", 
+            "CNAME", 
+            "SRV", 
+            "TXT"
+        ]="SRV",
+        domain_types: List[
+            Literal[
+                "_udp", 
+                "_tcp", 
+                "_tcps", 
+                "_http", 
+                "_https"
+            ]
+        ]=["_udp"]
     ):
         known_nodes_count = len(self._known_nodes)
         known_node = self._known_nodes.get((host, port))
@@ -313,8 +355,22 @@ class DNSRegistrarService(Controller):
         self,
         host: str,
         port: int,
-        record_type: Literal["A", "AAAA", "CNAME", "SRV", "TXT"],
-        domain_types: List[Literal["_udp", "_tcp", "_http"]]=["_udp"],
+        record_type: Literal[
+            "A", 
+            "AAAA", 
+            "CNAME", 
+            "SRV", 
+            "TXT"
+        ]="SRV",
+        domain_types: List[
+            Literal[
+                "_udp", 
+                "_tcp", 
+                "_tcps", 
+                "_http", 
+                "_https"
+            ]
+        ]=["_udp"],
         domain_values: Dict[str, str]={}
     ) -> Call[Registration]:
         
