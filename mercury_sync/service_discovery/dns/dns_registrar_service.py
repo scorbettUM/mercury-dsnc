@@ -1,5 +1,5 @@
 import asyncio
-import traceback
+from collections import defaultdict
 from mercury_sync.env import load_env, Env
 from mercury_sync.hooks import (
     client,
@@ -8,7 +8,14 @@ from mercury_sync.hooks import (
 from mercury_sync.models.registration import Registration
 from mercury_sync.service.controller import Controller
 from mercury_sync.types import Call
-from typing import Union, Optional, List, Literal, Dict, Tuple
+from typing import (
+    Union, 
+    Optional, 
+    List, 
+    Literal, 
+    Dict, 
+    Tuple
+)
 from .resolver import DNSResolver
 from .server import (
     DNSServer,
@@ -16,7 +23,7 @@ from .server import (
 )
 
 
-class DNSService(Controller):
+class DNSRegistrarService(Controller):
 
     def __init__(
         self,
@@ -71,7 +78,8 @@ class DNSService(Controller):
             entries
         )
 
-        self._registered_nameservers: Dict[Tuple[str, int], bool] = {}
+        self._known_nodes: Dict[Tuple[str, int], bool] = {}
+        self.registered_clients: Dict[str, Tuple[str, Tuple[str]]] = {}
 
     async def start(self):
         await self.start_server()
@@ -99,7 +107,10 @@ class DNSService(Controller):
         port: int,
         record_type: Literal["A", "AAAA", "CNAME", "TXT"]="A"
     ):
-        if self._registered_nameservers.get((host, port)) is None:
+        known_nodes_count = len(self._known_nodes)
+        known_node = self._known_nodes.get((host, port))
+
+        if known_node is None and known_nodes_count < 1:
             await self.start_client(
                 Registration(
                     host=host,
@@ -108,13 +119,74 @@ class DNSService(Controller):
                 )
             )
 
-            self._registered_nameservers[(host, port)] = True
+            self._known_nodes[(host, port)] = True
+
+        elif known_node is None:
+            await self.extend_client(
+                Registration(
+                    host=host,
+                    port=port,
+                    records=[]
+                )
+            )
         
         _, registration = await self.push_registration(
             host,
             port,
             record_type
         )
+
+        for record in registration.records:
+            self.registered_clients[record.domain_targets] = (
+                record.record_type,
+                record.domain_name
+            )
+
+        self.server.add_entries(registration.records)
+        self.resolver.add_entries(registration.records)
+
+        return registration
+    
+    async def query_known_nodes(
+        self,
+        host: str,
+        port: int,
+        record_type: Literal["A", "AAAA", "CNAME", "TXT"]="A"
+    ):
+        known_nodes_count = len(self._known_nodes)
+        known_node = self._known_nodes.get((host, port))
+
+        if known_node is None and known_nodes_count < 1:
+            await self.start_client(
+                Registration(
+                    host=host,
+                    port=port,
+                    records=[]
+                )
+            )
+
+            self._known_nodes[(host, port)] = True
+
+        elif known_node is None:
+            await self.extend_client(
+                Registration(
+                    host=host,
+                    port=port,
+                    records=[]
+                )
+            )
+
+        _, registration = await self.push_registration(
+            host,
+            port,
+            record_type
+        )
+
+        for record in registration.records:
+            self.registered_clients[record.domain_targets] = (
+                record.record_type,
+                record.domain_name
+            )
 
         self.server.add_entries(registration.records)
         self.resolver.add_entries(registration.records)
@@ -147,6 +219,12 @@ class DNSService(Controller):
         ]
 
         for entry in registration.records:
+
+            self.registered_clients[entry.domain_targets] = (
+                entry.record_type,
+                entry.domain_name
+            )
+
             entry_nameservers = self.server.get_nameserver_addresses(
                 entry.domain_name
             )
@@ -165,6 +243,27 @@ class DNSService(Controller):
             host=self.host,
             port=self.dns_port,
             records=nameservers
+        )
+    
+    @server()
+    async def update_registered(
+        self,
+        shard_id: int,
+        registered: Registration
+    ) -> Call[Registration]:
+        
+        current_records = self.gather_currently_registered()
+
+        for entry in registered.records:
+            self.registered_clients[entry.domain_targets] = (
+                entry.record_type,
+                entry.domain_name
+            )
+
+        return Registration(
+            host=self.host,
+            port=self.port,
+            records=current_records
         )
     
     @client('register_service')
@@ -187,6 +286,40 @@ class DNSService(Controller):
                 )
             ]
         )
+    
+    @client('update_registered')
+    async def push_registered_query(
+        self,
+        host: str,
+        port: int
+    ) -> Call[Registration]:
+        
+        current_records = self.gather_currently_registered()
+
+        return Registration(
+            host=host,
+            port=port,
+            records=current_records
+        )
+    
+
+    def gather_currently_registered(self) -> List[DNSEntry]:
+
+        currently_registered: List[DNSEntry] = []
+
+        for domain_targets, domain_data in self.registered_clients.items():
+
+            record_type, domain_name = domain_data
+
+            currently_registered.append(
+                DNSEntry(
+                    domain_name=domain_name,
+                    record_type=record_type,
+                    domain_targets=domain_targets
+                )
+            )
+
+        return currently_registered
     
     async def shutdown(self):
         await self.close()

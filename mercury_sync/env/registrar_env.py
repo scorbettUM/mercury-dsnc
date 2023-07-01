@@ -1,8 +1,7 @@
 from pydantic import (
     BaseModel,
     StrictStr,
-    StrictInt,
-    StrictFloat
+    StrictInt
 )
 from typing import (
     Dict, 
@@ -16,7 +15,7 @@ PrimaryType = Union[str, int, float, bytes, bool]
 
 class RegistrarEnv(BaseModel):
     MERCURY_SYNC_REGISTRAR_CLIENT_POLL_RATE: StrictStr='1s'
-    MERCURY_SYNC_REGISTRAR_EXPECTED_NODES: StrictInt=3
+    MERCURY_SYNC_REGISTRAR_EXPECTED_NODES: StrictInt
     MERCURY_SYNC_REGISTRATION_TIMEOUT: StrictStr='1m'
 
     @classmethod

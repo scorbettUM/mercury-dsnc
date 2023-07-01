@@ -1,4 +1,4 @@
-from .dns_service import (
-    DNSService, 
+from .dns_registrar_service import (
+    DNSRegistrarService, 
     DNSEntry
 )
