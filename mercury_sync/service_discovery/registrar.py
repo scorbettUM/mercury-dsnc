@@ -150,14 +150,9 @@ class Registrar:
 
             for record in records:
 
-                record_data: ARecordData = record.data
-
-                dns_entry = DNSEntry(
-                    domain_name=record.name,
-                    record_type=record_data.rtype.name,
-                    domain_targets=(
-                        record_data.data,
-                    )
+                dns_entry = DNSEntry.from_record_data(
+                    record.name,
+                    record.data
                 )
 
                 entries.append(dns_entry)

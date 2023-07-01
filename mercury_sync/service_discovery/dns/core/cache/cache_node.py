@@ -1,3 +1,4 @@
+from collections import defaultdict
 from mercury_sync.service_discovery.dns.core.record.record_data_types import (
     RecordData
 )

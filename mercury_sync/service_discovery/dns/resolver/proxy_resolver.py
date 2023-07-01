@@ -117,9 +117,9 @@ class ProxyResolver(BaseResolver):
         ]
         
         self.cache.add(
-            entry.domain_name,
+            entry.to_domain(),
             record_type,
-            domain_targets
+            entry.to_data()
         )
 
         nameserver_pairs = self.set_proxies(domain_targets)

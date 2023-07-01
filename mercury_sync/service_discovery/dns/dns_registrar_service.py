@@ -1,4 +1,5 @@
 import asyncio
+import traceback
 from collections import defaultdict
 from mercury_sync.env import load_env, Env
 from mercury_sync.hooks import (
@@ -79,7 +80,50 @@ class DNSRegistrarService(Controller):
         )
 
         self._known_nodes: Dict[Tuple[str, int], bool] = {}
-        self.registered_clients: Dict[str, Tuple[str, Tuple[str]]] = {}
+        self.registered_clients: Dict[Tuple[str, str], DNSEntry] = {}
+
+        self._default_nameservers: List[DNSEntry] = [
+            DNSEntry(
+                domain_types=["_udp"],
+                domain_name=f'{self.service_domain}.dns',
+                domain_port=self.dns_port,
+                domain_targets=(
+                    self.host,
+                ),
+                record_type='SRV',
+            ),
+            DNSEntry(
+                domain_types=["_tcp"],
+                domain_name=f'{self.service_domain}.dns',
+                domain_port=self.dns_port + 1,
+                domain_targets=(
+                    self.host,
+                ),
+                record_type='SRV',
+            )
+        ]
+
+        self.default_records: List[DNSEntry] = [
+            DNSEntry(
+                domain_types=["_udp"],
+                domain_name=self.service_domain,
+                domain_port=self.port,
+                domain_targets=(
+                    self.host,
+                ),
+                record_type='SRV',
+            ),
+            DNSEntry(
+                domain_types=["_tcp"],
+                domain_name=self.service_domain,
+                domain_port=self.port + 1,
+                domain_targets=(
+                    self.host,
+                ),
+                record_type='SRV',
+            ),
+            *self._default_nameservers
+        ]
 
     async def start(self):
         await self.start_server()
@@ -92,9 +136,15 @@ class DNSRegistrarService(Controller):
     async def query(
         self,
         domain_name: str,
-        record_type: Literal["A", "AAAA", "CNAME", "TXT"]="A",
+        record_type: Literal["A", "AAAA", "CNAME", "SRV", "TXT"]="SRV",
+        domain_types: List[Literal["_udp", "_tcp", "_http"]]=["_udp"],
         skip_cache: bool=False
     ):
+        
+        if record_type == "SRV":
+            domain_types = '.'.join(domain_types)
+            domain_name = f'{domain_types}.{domain_name}'
+
         return await self.resolver.query(
             domain_name,
             record_type,
@@ -105,7 +155,8 @@ class DNSRegistrarService(Controller):
         self,
         host: str,
         port: int,
-        record_type: Literal["A", "AAAA", "CNAME", "TXT"]="A"
+        record_type: Literal["A", "AAAA", "CNAME", "SRV", "TXT"]="SRV",
+        domain_types: List[Literal["_udp", "_tcp", "_http"]]=["_udp"],
     ):
         known_nodes_count = len(self._known_nodes)
         known_node = self._known_nodes.get((host, port))
@@ -133,14 +184,13 @@ class DNSRegistrarService(Controller):
         _, registration = await self.push_registration(
             host,
             port,
-            record_type
+            record_type,
+            domain_types=domain_types
         )
 
         for record in registration.records:
-            self.registered_clients[record.domain_targets] = (
-                record.record_type,
-                record.domain_name
-            )
+            domain_target = str(record.domain_targets[0])
+            self.registered_clients[(record.record_type, domain_target)] = record
 
         self.server.add_entries(registration.records)
         self.resolver.add_entries(registration.records)
@@ -151,7 +201,8 @@ class DNSRegistrarService(Controller):
         self,
         host: str,
         port: int,
-        record_type: Literal["A", "AAAA", "CNAME", "TXT"]="A"
+        record_type: Literal["A", "AAAA", "CNAME", "SRV", "TXT"]="SRV",
+        domain_types: List[Literal["_udp", "_tcp", "_http"]]=["_udp"],
     ):
         known_nodes_count = len(self._known_nodes)
         known_node = self._known_nodes.get((host, port))
@@ -179,14 +230,13 @@ class DNSRegistrarService(Controller):
         _, registration = await self.push_registration(
             host,
             port,
-            record_type
+            record_type,
+            domain_types=domain_types
         )
 
         for record in registration.records:
-            self.registered_clients[record.domain_targets] = (
-                record.record_type,
-                record.domain_name
-            )
+            domain_target = str(record.domain_targets[0])
+            self.registered_clients[(record.record_type, domain_target)] = record
 
         self.server.add_entries(registration.records)
         self.resolver.add_entries(registration.records)
@@ -200,6 +250,8 @@ class DNSRegistrarService(Controller):
         registration: Registration
     ) -> Call[Registration]:
         
+        nameservers: List[DNSEntry] = self._default_nameservers
+    
         self.server.add_entries(
             registration.records
         )
@@ -208,31 +260,23 @@ class DNSRegistrarService(Controller):
             registration.records
         )
 
-        nameservers: List[DNSEntry] = [
-            DNSEntry(
-                    domain_name=self.service_domain,
-                    record_type='A',
-                    domain_targets=(
-                        self.host,
-                    )
-                )
-        ]
-
-        for entry in registration.records:
-
-            self.registered_clients[entry.domain_targets] = (
-                entry.record_type,
-                entry.domain_name
-            )
+        
+        for record in registration.records:
+            domain_target = str(record.domain_targets[0])
+            self.registered_clients[(record.record_type, domain_target)] = record
 
             entry_nameservers = self.server.get_nameserver_addresses(
-                entry.domain_name
+                record.domain_name
             )
 
             nameservers.extend([
                 DNSEntry(
-                    domain_name=entry.domain_name,
-                    record_type=entry.record_type,
+                    domain_types=[
+                        address.domain_type
+                    ],
+                    domain_name=record.domain_name,
+                    domain_port=address.hostinfo.port,
+                    record_type=record.record_type,
                     domain_targets=(
                         address.hostinfo.hostname,
                     )
@@ -254,11 +298,9 @@ class DNSRegistrarService(Controller):
         
         current_records = self.gather_currently_registered()
 
-        for entry in registered.records:
-            self.registered_clients[entry.domain_targets] = (
-                entry.record_type,
-                entry.domain_name
-            )
+        for record in registered.records:
+            domain_target = str(record.domain_targets[0])
+            self.registered_clients[(record.record_type, domain_target)] = record
 
         return Registration(
             host=self.host,
@@ -271,18 +313,25 @@ class DNSRegistrarService(Controller):
         self,
         host: str,
         port: int,
-        record_type: str
+        record_type: Literal["A", "AAAA", "CNAME", "SRV", "TXT"],
+        domain_types: List[Literal["_udp", "_tcp", "_http"]]=["_udp"],
+        domain_values: Dict[str, str]={}
     ) -> Call[Registration]:
+        
+
         return Registration(
             host=host,
             port=port,
             records=[
                 DNSEntry(
+                    domain_types=domain_types,
                     domain_name=self.service_domain,
-                    record_type=record_type,
+                    domain_port=self.port,
                     domain_targets=(
                         self.host,
-                    )
+                    ),
+                    record_type=record_type,
+                    domain_values=domain_values
                 )
             ]
         )
@@ -304,22 +353,7 @@ class DNSRegistrarService(Controller):
     
 
     def gather_currently_registered(self) -> List[DNSEntry]:
-
-        currently_registered: List[DNSEntry] = []
-
-        for domain_targets, domain_data in self.registered_clients.items():
-
-            record_type, domain_name = domain_data
-
-            currently_registered.append(
-                DNSEntry(
-                    domain_name=domain_name,
-                    record_type=record_type,
-                    domain_targets=domain_targets
-                )
-            )
-
-        return currently_registered
+        return list(self.registered_clients.values())
     
     async def shutdown(self):
         await self.close()

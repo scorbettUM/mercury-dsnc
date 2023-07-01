@@ -73,11 +73,14 @@ class BaseHandler:
         record_type: RecordType,
         address: List[str]
     ):
+        
         self.cache.add(
             name,
             record_type,
             address
+            
         )
+
 
     async def handle_dns(
         self,

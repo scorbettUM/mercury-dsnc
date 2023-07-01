@@ -128,6 +128,7 @@ class BaseResolver:
         
         has_result = False
         for rec in self.cache.query(fqdn, qtype):
+
             if isinstance(rec.data, NSRecordData):
                 a_res = list(self.cache.query(
                     rec.data.data, (
@@ -157,13 +158,17 @@ class BaseResolver:
 
         while True:
             cname = self._add_cache_cname(msg, fqdn)
-            if not cname: break
+            if not cname: 
+                break
+
             if cname in cnames:
                 # CNAME cycle detected
                 break
+
             cnames.add(cname)
             # RFC1034: If a CNAME RR is present at a node, no other data should be present
             fqdn = cname
+
         has_result = bool(cname) and qtype in (RecordType.CNAME, RecordType.ANY)
 
         if qtype != RecordType.CNAME:

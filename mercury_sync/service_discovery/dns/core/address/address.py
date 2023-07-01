@@ -33,6 +33,14 @@ class Address:
             self.hostinfo.hostname
         )
 
+        self.domain_type_map = {
+            "tcp": "_tcp",
+            "udp": "_udp",
+            "tcps": "_tcps",
+            "http": "_http",
+            "https": "_https"
+        }
+
     def __str__(self):
         protocol = self.protocol or '-'
         host = self.hostinfo.host
@@ -134,3 +142,7 @@ class Address:
             )
         
         return addr
+    
+    @property
+    def domain_type(self):
+        return self.domain_type_map.get(self.protocol, "_udp")

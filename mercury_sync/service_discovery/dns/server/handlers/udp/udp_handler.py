@@ -43,11 +43,9 @@ class UDPHandler(asyncio.DatagramProtocol):
         record_type = self.handler.types_map.types_by_name.get(entry.record_type)
         
         self.handler.add_to_cache(
-            entry.domain_name,
+            entry.to_domain(),
             record_type,
-            [
-                str(entry) for entry in entry.domain_targets
-            ]
+            entry.to_data()
         )
     
     def initialize(self):

@@ -118,11 +118,9 @@ class RecursiveResolver(BaseResolver):
         record_type = self.types_map.types_by_name.get(entry.record_type)
         
         self.cache.add(
-            entry.domain_name,
+            entry.to_domain(),
             record_type,
-            [
-                str(entry) for entry in entry.domain_targets
-            ]
+            entry.to_data()
         )
 
     async def _query(
