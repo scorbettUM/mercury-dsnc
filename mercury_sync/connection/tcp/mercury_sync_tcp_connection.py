@@ -5,6 +5,7 @@ import socket
 import ssl
 import zstandard
 from collections import deque, defaultdict
+from mercury_sync.connection.base.connection_type import ConnectionType
 from mercury_sync.encryption import AESGCMFernet
 from mercury_sync.env import Env
 from mercury_sync.env.time_parser import TimeParser
@@ -82,6 +83,8 @@ class MercurySyncTCPConnection:
         self._max_concurrency = env.MERCURY_SYNC_MAX_CONCURRENCY
         self._tcp_connect_retries = env.MERCURY_SYNC_TCP_CONNECT_RETRIES
 
+        self.connection_type = ConnectionType.TCP
+
     def connect(
         self,
         cert_path: Optional[str]=None,
@@ -119,6 +122,7 @@ class MercurySyncTCPConnection:
         elif self.connected is False:
             self._server_socket = worker_socket
             host, port = worker_socket.getsockname()
+            
             self.host = host
             self.port = port
 
@@ -183,6 +187,7 @@ class MercurySyncTCPConnection:
         elif self.connected is False:
             self._server_socket = worker_socket
             host, port = worker_socket.getsockname()
+
             self.host = host
             self.port = port
 
@@ -230,8 +235,12 @@ class MercurySyncTCPConnection:
         self,
         address: Tuple[str, int],
         cert_path: Optional[str]=None,
-        key_path: Optional[str]=None
-    ) -> Coroutine[Any, Any, asyncio.Transport]:
+        key_path: Optional[str]=None,
+        worker_socket: Optional[socket.socket]=None,
+    ) -> None:
+        
+        if self._semaphore is None:
+            self._semaphore = asyncio.Semaphore(self._max_concurrency)
         
         self._loop = asyncio.get_event_loop()
         if cert_path and key_path:
@@ -240,11 +249,22 @@ class MercurySyncTCPConnection:
                 key_path=key_path
             ) 
 
-        tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        tcp_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        await self._loop.run_in_executor(None, tcp_socket.connect, address)
+        if worker_socket is None:
 
-        tcp_socket.setblocking(False)
+            tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            tcp_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            await self._loop.run_in_executor(None, tcp_socket.connect, address)
+
+            tcp_socket.setblocking(False)
+
+        else:
+
+            tcp_socket = worker_socket
+            host, port = tcp_socket.getsockname()
+            
+            self.host = host
+            self.port = port
+ 
 
         last_error: Union[Exception, None] = None
 
@@ -358,8 +378,6 @@ class MercurySyncTCPConnection:
             waiter = self._loop.create_future()
             self._waiters[event_name].append(waiter)
 
-            await waiter
-
             (
                 _,
                 shard_id,
@@ -367,12 +385,37 @@ class MercurySyncTCPConnection:
                 response_data,
                 _, 
                 _
-            ) = self.queue[event_name].pop()
+            ) = await waiter
 
             return (
                 shard_id,
                 response_data
             )
+        
+    async def send_bytes(
+        self,
+        event_name: str,
+        data: bytes,
+        address: Tuple[str, int]
+    ) -> bytes:
+        async with self._semaphore:
+            self._last_call.append(event_name)
+
+            client_transport = self._client_transports.get(address)
+            if client_transport is None:
+                await self.connect_client(
+                    address,
+                    cert_path=self._client_cert_path,
+                    key_path=self._client_key_path
+                )
+
+                client_transport = self._client_transports.get(address)
+
+            client_transport.write(data)
+
+            waiter = self._loop.create_future()
+            self._waiters[event_name].append(waiter)
+            return await waiter
     
     async def stream(
         self, 
@@ -615,15 +658,6 @@ class MercurySyncTCPConnection:
             if event_name is None and bool(self._last_call):
                 event_name = self._last_call.pop()
 
-            self.queue[event_name].append((
-                message_type, 
-                shard_id,
-                event_name,
-                payload, 
-                incoming_host,
-                incoming_port
-            ))
-
                 
             event_waiter = self._waiters[event_name]
 
@@ -632,7 +666,14 @@ class MercurySyncTCPConnection:
 
                 try:
 
-                    waiter.set_result(None)
+                    waiter.set_result((
+                        message_type, 
+                        shard_id,
+                        event_name,
+                        payload, 
+                        incoming_host,
+                        incoming_port
+                    ))
 
                 except asyncio.InvalidStateError:
                     pass

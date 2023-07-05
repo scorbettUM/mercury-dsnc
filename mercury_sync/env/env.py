@@ -1,8 +1,10 @@
+from ipaddress import IPv4Address
 from pydantic import (
     BaseModel,
     StrictStr,
     StrictInt,
-    StrictFloat
+    StrictFloat,
+    IPvAnyAddress
 )
 from typing import (
     Dict, 
@@ -33,6 +35,7 @@ class Env(BaseModel):
     MERCURY_SYNC_CLEANUP_INTERVAL: StrictStr='10s'
     MERCURY_SYNC_MAX_CONCURRENCY: StrictInt=2048
     MERCURY_SYNC_AUTH_SECRET: StrictStr
+    MERCURY_SYNC_MULTICAST_GROUP: IPvAnyAddress='224.1.1.1'
 
     @classmethod
     def types_map(self) -> Dict[str, Callable[[str], PrimaryType]]:
@@ -53,5 +56,6 @@ class Env(BaseModel):
             'MERCURY_SYNC_INDIRECT_CHECK_NODES': int,
             'MERCURY_SYNC_CLEANUP_INTERVAL': str,
             'MERCURY_SYNC_MAX_CONCURRENCY': int,
-            'MERCURY_SYNC_AUTH_SECRET': str
+            'MERCURY_SYNC_AUTH_SECRET': str,
+            'MERCURY_SYNC_MULTICAST_GROUP': str
         }

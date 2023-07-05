@@ -7,6 +7,7 @@ import ssl
 import zstandard
 from collections import deque, defaultdict
 from dtls import do_patch
+from mercury_sync.connection.base.connection_type import ConnectionType
 from mercury_sync.connection.udp.protocols import MercurySyncUDPProtocol
 from mercury_sync.encryption import AESGCMFernet
 from mercury_sync.env import Env
@@ -71,6 +72,8 @@ class MercurySyncUDPConnection:
         self._max_concurrency = env.MERCURY_SYNC_MAX_CONCURRENCY
         self.udp_socket: Union[socket.socket, None] = None
 
+        self.connection_type = ConnectionType.UDP
+
     def connect(
         self, 
         cert_path: Optional[str]=None,
@@ -94,7 +97,12 @@ class MercurySyncUDPConnection:
         self._decompressor = zstandard.ZstdDecompressor()
 
         if worker_socket is None:
-            self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+            self.udp_socket = socket.socket(
+                socket.AF_INET, 
+                socket.SOCK_DGRAM, 
+                socket.IPPROTO_UDP
+            )
+
             self.udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self.udp_socket.bind((
                 self.host,
@@ -105,7 +113,10 @@ class MercurySyncUDPConnection:
 
         else:
             self.udp_socket = worker_socket
-
+            host, port = self.udp_socket.getsockname()
+            
+            self.host = host
+            self.port = port
 
         if cert_path and key_path:
             self._udp_ssl_context = self._create_udp_ssl_context(
@@ -126,22 +137,6 @@ class MercurySyncUDPConnection:
         self._transport = transport
 
         self._cleanup_task = self._loop.create_task(self._cleanup())
-
-    def copy_to_connection(self, new_udp_connection: MercurySyncUDPConnection) -> MercurySyncUDPConnection:
-        new_udp_connection.parsers.update(self.parsers)
-        new_udp_connection._udp_cert_path = self._udp_cert_path
-        new_udp_connection._udp_key_path = self._udp_key_path
-        new_udp_connection._udp_ssl_context = self._udp_ssl_context
-        new_udp_connection._running = True
-
-        new_udp_connection._semaphore = asyncio.Semaphore(self._max_concurrency)
-
-        new_udp_connection._compressor = zstandard.ZstdCompressor()
-        new_udp_connection._decompressor = zstandard.ZstdDecompressor()
-        new_udp_connection._transport = self._transport
-        new_udp_connection._cleanup_task = self._loop.create_task(new_udp_connection._cleanup())
-
-        return new_udp_connection
 
     async def connect_async(
         self, 
@@ -268,8 +263,6 @@ class MercurySyncUDPConnection:
         waiter = self._loop.create_future()
         self._waiters[event_name].append(waiter)
 
-        await waiter
-
         (
             _,
             shard_id,
@@ -277,12 +270,25 @@ class MercurySyncUDPConnection:
             response_data,
             _, 
             _
-        ) = self.queue[event_name].pop()
+        ) = await waiter
 
         return (
             shard_id,
             response_data
         )
+    
+    async def send_bytes(
+        self,
+        event_name: str,
+        data: bytes,
+        addr: Tuple[str, int]
+    ) -> bytes:
+        
+        self._transport.sendto(data, addr)
+
+        waiter = self._loop.create_future()
+        self._waiters[event_name].append(waiter)
+        return await waiter
 
     async def stream(
         self, 
@@ -339,9 +345,7 @@ class MercurySyncUDPConnection:
             str, 
             int, 
             float, 
-            Any, 
-            str, 
-            int
+            Any
         ] = pickle.loads(decrypted)
 
         (
@@ -383,24 +387,22 @@ class MercurySyncUDPConnection:
             )
 
         else:
-            self.queue[event_name].append((
-                message_type, 
-                shard_id,
-                event_name,
-                payload, 
-                incoming_host,
-                incoming_port
-            ))
 
             event_waiter = self._waiters[event_name]
-
-            
+      
             if bool(event_waiter):
                 waiter = event_waiter.pop()
                 
                 try:
                     
-                    waiter.set_result(None)
+                    waiter.set_result((
+                        message_type, 
+                        shard_id,
+                        event_name,
+                        payload, 
+                        incoming_host,
+                        incoming_port
+                    ))
                 
                 except asyncio.InvalidStateError:
                     pass
