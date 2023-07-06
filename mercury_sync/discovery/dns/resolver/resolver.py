@@ -1,7 +1,12 @@
+import asyncio
 from mercury_sync.discovery.dns.core.record import (
     RecordType,
     RecordTypesMap
 )
+from mercury_sync.discovery.dns.core.record.record_data_types import RecordData
+from mercury_sync.discovery.dns.core.url import URL
+from mercury_sync.env import Env
+from mercury_sync.models.dns_message import DNSMessage
 from typing import Literal, Optional, List, Tuple, Callable, Union
 from .proxy_resolver import ProxyResolver
 from .recursive_resolver import RecursiveResolver
@@ -28,6 +33,8 @@ class DNSResolver:
         self,
         host: str,
         port: int,
+        instance_id: str,
+        env: Env,
         resolver: Literal["proxy", "recursive"]="proxy",
         proxies: Optional[
             List[Proxy]
@@ -41,6 +48,8 @@ class DNSResolver:
             self.resolver = ProxyResolver(
                 host,
                 port,
+                instance_id,
+                env,
                 proxies=proxies,
                 query_timeout=query_timeout,
                 request_timeout=request_timeout
@@ -50,12 +59,34 @@ class DNSResolver:
             self.resolver = RecursiveResolver(
                 host,
                 port,
+                instance_id,
+                env,
                 max_tick=max_tick,
                 query_timeout=query_timeout,
                 request_timeout=request_timeout
             )
 
         self.types_map = RecordTypesMap()
+
+    def add_to_cache(
+        self,
+        domain: str,
+        record_type: RecordType,
+        data: RecordData,
+        ttl: Union[int, float]=-1
+    ):
+        self.resolver.cache.add(
+            fqdn=domain,
+            record_type=record_type,
+            data=data,
+            ttl=ttl
+        )
+
+    def add_nameservers(
+        self,
+        urls: List[str]
+    ):
+        return self.resolver.add_nameserver(urls)
 
     def set_proxies(
         self,
@@ -68,16 +99,27 @@ class DNSResolver:
         if isinstance(self.resolver, RecursiveResolver):
             self.resolver.load_nameserver_cache()
 
+    async def connect_nameservers(
+        self,
+        urls: List[URL],
+        cert_path: Optional[str]=None,
+        key_path: Optional[str]=None,
+    ):
+        
+        await asyncio.gather(*[
+            self.resolver.client.connect_client(
+                url,
+                cert_path=cert_path,
+                key_path=key_path
+            ) for url in urls
+        ])
+
     async def query(
         self,
         domain_name: str,
         record_type: RecordType=RecordType.SRV,
         skip_cache: bool=False
-    ):
-        
-        record_type = self.types_map.types_by_name.get(
-            record_type
-        )
+    ) -> Tuple[DNSMessage, bool]:
 
         return await self.resolver.query(
             domain_name,

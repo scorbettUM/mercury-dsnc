@@ -6,7 +6,8 @@ from pydantic import (
 from typing import (
     Dict, 
     Union,
-    Callable
+    Callable,
+    Literal
 )
 
 
@@ -17,11 +18,13 @@ class RegistrarEnv(BaseModel):
     MERCURY_SYNC_REGISTRAR_CLIENT_POLL_RATE: StrictStr='1s'
     MERCURY_SYNC_REGISTRAR_EXPECTED_NODES: StrictInt
     MERCURY_SYNC_REGISTRATION_TIMEOUT: StrictStr='1m'
+    MERCURY_SYNC_RESOLVER_CONNECTION_TYPE: Literal["udp", "tcp", "http"]="udp"
 
     @classmethod
     def types_map(self) -> Dict[str, Callable[[str], PrimaryType]]:
         return {
             'MERCURY_SYNC_REGISTRAR_CLIENT_POLL_RATE': str,
             'MERCURY_SYNC_REGISTRAR_EXPECTED_NODES': int,
-            'MERCURY_SYNC_REGISTRATION_TIMEOUT': str
+            'MERCURY_SYNC_REGISTRATION_TIMEOUT': str,
+            'MERCURY_SYNC_RESOLVER_CONNECTION_TYPE': str
         }

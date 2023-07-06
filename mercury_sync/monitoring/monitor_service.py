@@ -3,12 +3,15 @@ import math
 import random
 import time
 from collections import defaultdict, deque
-from mercury_sync.env import Env, load_env
+from mercury_sync.env import (
+    Env, 
+    MonitorEnv,
+    load_env
+)
 from mercury_sync.env.time_parser import TimeParser
 from mercury_sync.hooks.client_hook import client
 from mercury_sync.hooks.server_hook import server
 from mercury_sync.models.healthcheck import HealthCheck, HealthStatus
-from mercury_sync.models.ticket import Ticket
 from mercury_sync.service.controller import Controller
 from mercury_sync.snowflake import Snowflake
 from mercury_sync.types import Call
@@ -34,6 +37,7 @@ class Monitor(Controller):
         self,
         host: str,
         port: int,
+        env: Env,
         cert_path: Optional[str]=None,
         key_path: Optional[str]=None,
         workers: int=0,
@@ -45,7 +49,10 @@ class Monitor(Controller):
         else:
             engine = 'process'
 
-        env = load_env(Env.types_map())
+        if env is None:
+            env: Env = load_env(Env)
+            
+        monitor_env: MonitorEnv = load_env(MonitorEnv)
 
         super().__init__(
             host,
@@ -61,26 +68,51 @@ class Monitor(Controller):
         
 
         self.error_context: Optional[str] = None
-        self.registration_timeout = TimeParser(env.MERCURY_SYNC_REGISTRATION_TIMEOUT).time
-        self.boot_wait = TimeParser(env.MERCURY_SYNC_BOOT_WAIT).time
+
+        self.registration_timeout = TimeParser(
+            monitor_env.MERCURY_SYNC_REGISTRATION_TIMEOUT
+        ).time
+
+        self.boot_wait = TimeParser(
+            monitor_env.MERCURY_SYNC_BOOT_WAIT
+        ).time
         
         self._healthchecks: Dict[str, asyncio.Task] = {}
         self._registered: Dict[int, Tuple[str, int]] = {}
         self._running = False
-        self._cleanup_interval = TimeParser(env.MERCURY_SYNC_CLEANUP_INTERVAL).time
-        self._poll_interval = TimeParser(env.MERCURY_SYNC_HEALTH_POLL_INTERVAL).time
-        self._poll_timeout = TimeParser(env.MERCURY_SYNC_HEALTH_CHECK_TIMEOUT).time
-        self._reboot_timeout = TimeParser(env.MERCURY_SYNC_IDLE_REBOOT_TIMEOUT).time
-        self._max_time_idle = TimeParser(env.MERCURY_SYNC_MAX_TIME_IDLE).time
-        self._poll_retries = env.MERCURY_SYNC_MAX_POLL_MULTIPLIER
-        self._sync_interval = TimeParser(env.MERCURY_SYNC_UDP_SYNC_INTERVAL).time
 
-        self._check_nodes_count = env.MERCURY_SYNC_INDIRECT_CHECK_NODES
+        self._cleanup_interval = TimeParser(
+            env.MERCURY_SYNC_CLEANUP_INTERVAL
+        ).time
 
-        self.min_suspect_multiplier = env.MERCURY_SYNC_MIN_SUSPECT_TIMEOUT_MULTIPLIER
-        self.max_suspect_multiplier = env.MERCURY_SYNC_MAX_SUSPECT_TIMEOUT_MULTIPLIER 
-        self._min_suspect_node_count = env.MERCURY_SYNC_MIN_SUSPECT_NODES_THRESHOLD
-        self._max_poll_multiplier = env.MERCURY_SYNC_MAX_POLL_MULTIPLIER
+        self._poll_interval = TimeParser(
+            monitor_env.MERCURY_SYNC_HEALTH_POLL_INTERVAL
+        ).time
+
+        self._poll_timeout = TimeParser(
+            monitor_env.MERCURY_SYNC_HEALTH_CHECK_TIMEOUT
+        ).time
+
+        self._reboot_timeout = TimeParser(
+            monitor_env.MERCURY_SYNC_IDLE_REBOOT_TIMEOUT
+        ).time
+
+        self._max_time_idle = TimeParser(
+            monitor_env.MERCURY_SYNC_MAX_TIME_IDLE
+        ).time
+
+        self._poll_retries = monitor_env.MERCURY_SYNC_MAX_POLL_MULTIPLIER
+
+        self._sync_interval = TimeParser(
+            monitor_env.MERCURY_SYNC_UDP_SYNC_INTERVAL
+        ).time
+
+        self._check_nodes_count = monitor_env.MERCURY_SYNC_INDIRECT_CHECK_NODES
+
+        self.min_suspect_multiplier = monitor_env.MERCURY_SYNC_MIN_SUSPECT_TIMEOUT_MULTIPLIER
+        self.max_suspect_multiplier = monitor_env.MERCURY_SYNC_MAX_SUSPECT_TIMEOUT_MULTIPLIER 
+        self._min_suspect_node_count = monitor_env.MERCURY_SYNC_MIN_SUSPECT_NODES_THRESHOLD
+        self._max_poll_multiplier = monitor_env.MERCURY_SYNC_MAX_POLL_MULTIPLIER
         self._local_health_multiplier = 0
 
         self._confirmed_suspicions: Dict[Tuple[str, int], int] = defaultdict(lambda: 0)
@@ -657,7 +689,7 @@ class Monitor(Controller):
         self,
         host: str,
         port: int
-    ) -> Call[Ticket]:
+    ):
         
         self.bootstrap_host = host
         self.bootstrap_port = port

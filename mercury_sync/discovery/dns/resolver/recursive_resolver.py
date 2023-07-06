@@ -3,6 +3,7 @@ import os
 import pathlib
 from urllib import request
 
+from mercury_sync.discovery.dns.core.cache import CacheNode
 from mercury_sync.models.dns_message import (
     DNSMessage,
     QueryType
@@ -22,6 +23,7 @@ from mercury_sync.discovery.dns.core.record.record_data_types import (
     SOARecordData,
     NSRecordData
 )
+from mercury_sync.env import Env
 from typing import Tuple, Optional, List
 from .base_resolver import BaseResolver
 from .memoizer import Memoizer
@@ -29,29 +31,51 @@ from .memoizer import Memoizer
 
 
 class RecursiveResolver(BaseResolver):
-    '''Recursive DNS resolver.
 
-    Resolve hostnames recursively from upstream name servers.
-    '''
-    name = 'RecursiveResolver'
     memoizer = Memoizer()
 
     def __init__(
         self, 
         host: str,
         port: int,
-        *args, max_tick=5, 
-        **kwargs
+        instance_id: str,
+        env: Env,
+        cache: CacheNode = None,
+        query_timeout: float = 3.0,
+        request_timeout: float = 5.0,
+        max_tick: int=5
     ):
         super().__init__(
             host,
             port,
-            *args, 
-            **kwargs
+            instance_id,
+            env,
+            cache=cache,
+            query_timeout=query_timeout,
+            request_timeout=request_timeout
         )
 
         self.max_tick = max_tick
         self.types_map = RecordTypesMap()
+        self._nameserver_urls: List[str] = []
+
+    def add_nameserver(
+        self,
+        urls: List[str]
+    ):
+        self._nameserver_urls.extend(urls)
+
+        for url in urls:
+
+            self.cache.add(
+                fqdn=url,
+                record_type=RecordType.NS,
+                data=NSRecordData(url)
+            )
+
+        nameserver = NameServer(urls)
+
+        return nameserver.data
         
     def load_nameserver_cache(
         self,
@@ -127,7 +151,7 @@ class RecursiveResolver(BaseResolver):
     def _get_matching_nameserver(self, fqdn: str):
         '''Return a generator of parent domains'''
 
-        hosts: List[URL] = []
+        hosts: List[URL] = self._nameserver_urls
         empty = True
 
         while fqdn and empty:
@@ -238,7 +262,7 @@ class RecursiveResolver(BaseResolver):
         
         result: DNSMessage = await self.request(
             fqdn, 
-            record_type, 
+            msg, 
             url
         )
 

@@ -61,7 +61,7 @@ class MercurySyncTCPConnection:
         self._last_call: Deque[str] = deque()
 
         self._sent_values = deque()
-        self._server_socket = None
+        self.server_socket = None
         self._stream = False
         
         self._client_key_path: Union[str, None] = None
@@ -113,14 +113,14 @@ class MercurySyncTCPConnection:
             ) 
 
         if self.connected is False and worker_socket is None:
-            self._server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self._server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self._server_socket.bind((self.host, self.port))
+            self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.server_socket.bind((self.host, self.port))
 
-            self._server_socket.setblocking(False)
+            self.server_socket.setblocking(False)
 
         elif self.connected is False:
-            self._server_socket = worker_socket
+            self.server_socket = worker_socket
             host, port = worker_socket.getsockname()
             
             self.host = host
@@ -132,7 +132,7 @@ class MercurySyncTCPConnection:
                 lambda: MercurySyncTCPServerProtocol(
                     self.read
                 ),
-                sock=self._server_socket,
+                sock=self.server_socket,
                 ssl=self._server_ssl_context
             )
 
@@ -170,22 +170,22 @@ class MercurySyncTCPConnection:
             ) 
 
         if self.connected is False and worker_socket is None:
-            self._server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self._server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
             try:
-                self._server_socket.bind((self.host, self.port))
+                self.server_socket.bind((self.host, self.port))
 
             except Exception:
                 pass
 
 
-            self._server_socket
+            self.server_socket
 
-            self._server_socket.setblocking(False)
+            self.server_socket.setblocking(False)
 
         elif self.connected is False:
-            self._server_socket = worker_socket
+            self.server_socket = worker_socket
             host, port = worker_socket.getsockname()
 
             self.host = host
@@ -197,7 +197,7 @@ class MercurySyncTCPConnection:
                 lambda: MercurySyncTCPServerProtocol(
                     self.read
                 ),
-                sock=self._server_socket,
+                sock=self.server_socket,
                 ssl=self._server_ssl_context
             )
 
@@ -260,11 +260,6 @@ class MercurySyncTCPConnection:
         else:
 
             tcp_socket = worker_socket
-            host, port = tcp_socket.getsockname()
-            
-            self.host = host
-            self.port = port
- 
 
         last_error: Union[Exception, None] = None
 

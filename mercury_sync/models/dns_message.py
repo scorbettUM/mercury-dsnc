@@ -206,7 +206,7 @@ class DNSMessage(Message):
 
                 buffer.write(packed_record)
 
-        self.truncation = truncation
+        self.query_truncation = truncation
         buffer.seek(0)
 
         query_type = self.query_type.value << 15

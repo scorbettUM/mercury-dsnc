@@ -1,4 +1,5 @@
 
+from mercury_sync.discovery.dns.core.cache import CacheNode
 from mercury_sync.models.dns_message import (
     DNSMessage,
     QueryType
@@ -10,6 +11,7 @@ from mercury_sync.discovery.dns.core.record import (
     RecordType,
     RecordTypesMap
 )
+from mercury_sync.env import Env
 from typing import Callable, List, Tuple, Optional, Union
 from .base_resolver import BaseResolver
 from .memoizer import Memoizer
@@ -41,11 +43,7 @@ NameServerPair = Tuple[
 
 
 class ProxyResolver(BaseResolver):
-    '''Proxy DNS resolver.
 
-    Resolve hostnames from another recursive DNS server instead of root servers.
-    '''
-    name = 'ProxyResolver'
     default_nameservers = core_config['default_nameservers']
     memoizer = Memoizer()
 
@@ -53,15 +51,21 @@ class ProxyResolver(BaseResolver):
         self, 
         host: str,
         port: int,
-        *args, 
-        proxies: Optional[List[Proxy]]=None, 
-        **kwargs
+        instance_id: str,
+        env: Env,
+        cache: CacheNode = None,
+        query_timeout: float = 3.0,
+        request_timeout: float = 5.0,
+        proxies: Optional[List[Proxy]]=None
     ):
         super().__init__(
             host,
             port,
-            *args, 
-            **kwargs
+            instance_id,
+            env,
+            cache=cache,
+            query_timeout=query_timeout,
+            request_timeout=request_timeout
         )
 
         if proxies is None:
@@ -77,6 +81,19 @@ class ProxyResolver(BaseResolver):
                 return nameserver
 
         return NameServer([])
+    
+    def add_nameserver(
+        self,
+        urls: List[str]
+    ):
+        namserver = NameServer(urls)
+
+        self._nameserver_pairs.append((
+            None,
+            namserver
+        ))
+
+        return namserver.data
 
     @staticmethod
     def build_tester(rule) ->  Callable[
@@ -164,7 +181,7 @@ class ProxyResolver(BaseResolver):
 
             for addr in nameserver.iter():
                 try:
-                    res = await self.request(fqdn, record_type, addr)
+                    res = await self.request(fqdn, msg, addr)
 
                 except:
                     nameserver.fail(addr)

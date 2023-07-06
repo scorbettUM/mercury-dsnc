@@ -39,7 +39,9 @@ class Service:
         self.key_path = key_path
 
         if env is None:
-            env = load_env(Env.types_map())
+            env = load_env(Env)
+
+        self._env = env
 
         self._udp_connection = MercurySyncUDPConnection(
             host,
@@ -112,10 +114,15 @@ class Service:
 
                     self._response_parsers[method.target] = response_model
 
-
-
-
         self._loop: Union[ asyncio.AbstractEventLoop, None] = None
+
+    def update_parsers(
+        self,
+        parsers: Dict[str, Message]
+    ):
+        self._udp_connection.parsers.update(parsers)
+        self._tcp_connection.parsers.update(parsers)
+
 
     def start(
         self,
@@ -135,6 +142,7 @@ class Service:
             key_path=self.key_path,
             worker_socket=udp_worker_socket
         )
+        
 
     def create_pool(self, size: int) -> List[Service]:
 
@@ -165,6 +173,25 @@ class Service:
         return type(self)(
             host,
             port
+        )
+    
+    async def use_server_socket(
+        self,
+        udp_worker_socket: socket.socket,
+        tcp_worker_socket: socket.socket,
+        cert_path: Optional[str]=None,
+        key_path: Optional[str]=None
+    ):
+        await self._udp_connection.connect_async(
+            cert_path=cert_path,
+            key_path=key_path,
+            worker_socket=udp_worker_socket
+        )
+
+        await self._tcp_connection.connect_async(
+            cert_path=cert_path,
+            key_path=key_path,
+            worker_socket=tcp_worker_socket
         )
 
 

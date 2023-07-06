@@ -5,7 +5,7 @@ from mercury_sync.connection.tcp import (
     MercurySyncTCPConnection
 )
 from mercury_sync.connection.udp import MercurySyncUDPConnection
-from mercury_sync.env import Env
+from mercury_sync.env import Env, RegistrarEnv, load_env
 from mercury_sync.models.dns_message import DNSMessage
 from mercury_sync.models.http_message import HTTPMessage
 from mercury_sync.discovery.dns.core.url import URL
@@ -19,9 +19,10 @@ class DNSClient:
         host: str,
         port: int,
         instance_id: str,
-        env: Env,
-        client_type: ConnectionType=ConnectionType.UDP
+        env: Env
     ) -> None:
+        
+        registrar_env: RegistrarEnv = load_env(RegistrarEnv)
         
         self.host = host
         self.port = port
@@ -55,7 +56,19 @@ class DNSClient:
             None
         ] = None
 
-        self.client_type = client_type
+        self._client_types = {
+            "udp": ConnectionType.UDP,
+            "tcp": ConnectionType.TCP,
+            "http": ConnectionType.HTTP
+        }
+
+        self.client_type = self._client_types.get(
+            registrar_env.MERCURY_SYNC_RESOLVER_CONNECTION_TYPE
+        )
+
+        self._connections: Dict[Tuple[str, int], bool] = {}
+        self.cert_paths: Dict[str, str] = {}
+        self.key_paths: Dict[str, str] = {}
 
     async def connect_client(
         self,
@@ -64,6 +77,10 @@ class DNSClient:
         key_path: Optional[str]=None,
         worker_socket: Optional[socket.socket]=None
     ):
+        
+        self.cert_paths[url.address] = cert_path
+        self.key_paths[url.address] = key_path
+        
         self._client: Union[
             MercurySyncUDPConnection,
             MercurySyncTCPConnection,
@@ -99,15 +116,19 @@ class DNSClient:
         self,
         event_name: str,
         data: DNSMessage,
-        address: Tuple[str, int],
-        url: Optional[str]=None
+        url: URL
     ):
+        
+        if self._client is None:
+            await self.connect_client(
+                url
+            )
         
         if self._client.connection_type == ConnectionType.TCP:
             response = await self._client.send_bytes(
                 event_name,
                 data.to_tcp_bytes(),
-                address
+                url.address
             )
 
             return DNSMessage.parse(response)
@@ -115,17 +136,18 @@ class DNSClient:
         elif self._client.connection_type == ConnectionType.HTTP:
             response: HTTPMessage = await self._client.send(
                 event_name,
-                data.to_http_bytes(url),
-                address
+                data.to_http_bytes(url.url),
+                url.address
             )
 
             return DNSMessage.parse(response.data)
         
         else:
+
             response = await self._client.send_bytes(
                 event_name,
                 data.to_udp_bytes(),
-                address
+                url.address
             )
 
             return DNSMessage.parse(response)

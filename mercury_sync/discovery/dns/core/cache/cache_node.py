@@ -43,8 +43,8 @@ class CacheNode:
             if value is not None:
                 yield from value.get(record_type)
         else:
-            for record_type in record_type:
-                yield from self.query(fqdn, record_type)
+            for rtype in record_type:
+                yield from self.query(fqdn, rtype)
 
     def add(
         self,

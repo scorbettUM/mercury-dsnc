@@ -1,4 +1,5 @@
 from __future__ import annotations
+import re
 import socket
 from mercury_sync.discovery.dns.core.record import RecordType
 from typing import Tuple, Union, Optional
@@ -7,6 +8,11 @@ from .exceptions import (
     InvalidHost,
     InvalidIP
 )
+
+
+ip_pattern = '(?P<host>[^:/ ]+).?(?P<port>[0-9]*).*'
+match_pattern = re.compile(ip_pattern)
+
 
 
 class URL:
@@ -18,6 +24,7 @@ class URL:
         url: str,
         port: Optional[int]=None
     ):
+
         self._default_ports = {
             'tcp': 53,
             'udp': 53,
@@ -46,20 +53,32 @@ class URL:
 
             self.host = host
 
-        if self.port is None:
-            self.port = self._default_ports.get(
-                self.parsed.scheme,
-                80
-            )
-
         self.is_ssl = False
         if self.parsed.scheme == 'tcps' or self.parsed.scheme == 'https':
             self.is_ssl = True
 
-
         self.ip_type = self.get_ip_type(
-            self.parsed.hostname
+            self.host
         )
+
+        if self.ip_type is None:
+
+            matches = re.search(
+                ip_pattern,
+                self.url
+            )
+            self.host = matches.group('host')
+            self.port = matches.group('port')
+
+            if self.port:
+                self.port = int(self.port)
+        
+
+        if self.port is None or self.port == '':
+            self.port = self._default_ports.get(
+                self.parsed.scheme,
+                80
+            )
 
         self.domain_protocol_map = {
             "tcp": "tcp",
@@ -102,10 +121,13 @@ class URL:
         if ':' in host:
             host, port = host.split(':')
 
+        if port:
+            port = int(port)
+
         return (
             authentication,
             host,
-            int(port)
+            port
         )
             
 

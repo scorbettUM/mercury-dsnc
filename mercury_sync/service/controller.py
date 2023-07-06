@@ -1,9 +1,11 @@
+from __future__ import annotations
 import asyncio
 import functools
 import inspect
 import multiprocessing as mp
 import random
 import signal
+import socket
 from collections import defaultdict
 from concurrent.futures import (
     ThreadPoolExecutor,
@@ -21,11 +23,18 @@ from typing import (
     Literal, 
     Union, 
     Dict,
+    Type,
     get_args,
     Callable,
     AsyncIterable,
-    Tuple
+    Tuple,
+    TypeVarTuple,
+    Generic
 )
+from .plugin_group import PluginGroup
+from .service import Service
+
+P = TypeVarTuple('P')
 
 
 def handle_worker_loop_stop(signame, loop: asyncio.AbstractEventLoop):
@@ -90,7 +99,7 @@ def start_pool(
     loop.run_forever()
 
 
-class Controller:
+class Controller(Generic[*P]):
 
     def __init__(
         self,
@@ -100,7 +109,11 @@ class Controller:
         key_path: Optional[str]=None,
         workers: int=0,
         env: Optional[Env]=None,
-        engine: Literal["process", "thread", 'async']="process"
+        engine: Literal["process", "thread", 'async']="async",
+        plugins: Dict[
+            str,
+            Type[Union[*P]]
+        ]={}
     ) -> None:
     
         self.name = self.__class__.__name__
@@ -129,9 +142,13 @@ class Controller:
         self._udp_queue: Dict[Tuple[str, int], asyncio.Queue] = defaultdict(asyncio.Queue)
         self._tcp_queue: Dict[Tuple[str, int], asyncio.Queue] = defaultdict(asyncio.Queue)
         self._cleanup_task: Union[asyncio.Task, None] = None
+        self._plugin_factory = plugins
+        self._waiter: Union[asyncio.Future, None] = None
+
+        self._plugins: Dict[str, PluginGroup[*P]] = {}
 
         if env is None:
-            env = load_env(Env.types_map())
+            env = load_env(Env)
 
         self.engine_type = engine
         self._response_parsers: Dict[str, Message] = {}
@@ -165,6 +182,17 @@ class Controller:
             )
         ]
 
+        for service_type, factory in self._plugin_factory.items():
+            self._plugins[service_type] = PluginGroup([
+                factory(
+                    host,
+                    port,
+                    cert_path=cert_path,
+                    key_path=key_path,
+                    env=env
+                ) for _ in range(self._workers)
+            ])
+
         methods = inspect.getmembers(self, predicate=inspect.ismethod)
 
         reserved_methods = [
@@ -175,7 +203,6 @@ class Controller:
             'stream_tcp',
             'close'
         ]
-
 
         controller_models: Dict[str, Message] = {}
         controller_methods: Dict[str, Callable[
@@ -228,6 +255,16 @@ class Controller:
         self._parsers: Dict[str, Message] = {}
         self._events: Dict[str, Message] = {}
 
+        for plugin_group in self._plugins.values():
+            for plugin in plugin_group.each():
+
+                plugin: Union[Controller, Service] = plugin
+
+                self._parsers.update(plugin._parsers)
+                self._response_parsers.update(plugin._response_parsers)
+
+                self._events.update(plugin._events)
+
         for tcp_connection, udp_connection in zip(
             self._udp_pool,
             self._tcp_pool
@@ -235,16 +272,85 @@ class Controller:
             
             for method_name, model in controller_models.items():
 
-                tcp_connection.parsers[method_name] = model
                 udp_connection.parsers[method_name] = model
+                tcp_connection.parsers[method_name] = model
+
                 self._parsers[method_name] = model
 
             for method_name, method in controller_methods.items():
 
-                tcp_connection.events[method_name] = method
                 udp_connection.events[method_name] = method
+                tcp_connection.events[method_name] = method
+
                 self._events[method_name] = method
+
+
+        
+        for plugin_group in self._plugins.values():
+            for plugin in plugin_group.each(): 
                 
+                if isinstance(plugin, Controller):
+                    for tcp_connection, udp_connection in zip(
+                        plugin._udp_pool,
+                        plugin._tcp_pool
+                    ):
+                        udp_connection.events.update(self._events)
+                        tcp_connection.events.update(self._events)
+
+                elif isinstance(plugin, Service):
+                    plugin._udp_connection.events.update(self._events)
+                    plugin._tcp_connection.events.update(self._events)
+
+                plugin._events.update(self._events)
+
+    
+    def __getitem__(self, name: str):
+        return self._plugins.get(name)
+    
+    async def run_forever(self):
+        loop = asyncio.get_event_loop()
+        self._waiter = loop.create_future()
+
+        await self._waiter
+    
+    async def use_server_socket(
+        self,
+        udp_worker_sockets: List[socket.socket],
+        tcp_worker_sockets: List[socket.socket],
+        cert_path: Optional[str]=None,
+        key_path: Optional[str]=None
+    ):
+        
+        for udp_socket, tcp_socket, udp_connection, tcp_connection in zip(
+            udp_worker_sockets,
+            tcp_worker_sockets,
+            self._udp_pool,
+            self._tcp_pool
+        ):
+            await udp_connection.connect_async(
+                cert_path=cert_path,
+                key_path=key_path,
+                worker_socket=udp_socket
+            )
+
+            await tcp_connection.connect_async(
+                cert_path=cert_path,
+                key_path=key_path,
+                worker_socket=tcp_socket
+            )
+
+    def update_parsers(
+        self,
+        parsers: Dict[str, Message]
+    ):
+
+        for udp_connection, tcp_connection in zip(
+            self._udp_pool,
+            self._tcp_pool
+        ):
+            udp_connection.parsers.update(parsers)
+            tcp_connection.parsers.update(parsers)
+
 
     async def start_server(
       self,
@@ -317,9 +423,59 @@ class Controller:
                             key_path=key_path
                         )
                     )
-                    )
+                )
 
         await asyncio.gather(*pool)
+
+        for idx in range(self._workers):
+        
+            udp_socket = self._udp_pool[idx].udp_socket
+            tcp_server_socket = self._tcp_pool[idx].server_socket
+
+            for plugin_name in self._plugins:
+
+                plugin: Union[
+                    Service,
+                    Controller
+                ] = self._plugins[plugin_name].at(idx)
+
+                if isinstance(plugin, Service):
+
+                    await plugin.use_server_socket(
+                        udp_socket,
+                        tcp_server_socket,
+                        cert_path=cert_path,
+                        key_path=key_path
+                    )
+
+                    plugin.update_parsers(self._parsers)
+
+        udp_sockets = [
+            udp_connection.udp_socket for udp_connection in self._udp_pool
+        ]
+
+        tcp_sockets = [
+            tcp_connection.server_socket for tcp_connection in self._tcp_pool
+        ]
+
+        for plugin_name in self._plugins:
+
+            plugin: Union[
+                Service,
+                Controller
+            ] = self._plugins[plugin_name].at(idx)
+
+            if isinstance(plugin, Controller):
+
+                await plugin.use_server_socket(
+                    udp_sockets,
+                    tcp_sockets,
+                    cert_path=cert_path,
+                    key_path=key_path
+                )
+
+                plugin.update_parsers(self._parsers)
+
 
     async def start_client(
         self,
@@ -338,7 +494,7 @@ class Controller:
             })
 
             remote_pool.append(remote_copy)
-
+        
         for udp_connection, tcp_connection, remote_copy in zip(
             self._udp_pool,
             self._tcp_pool,
@@ -378,8 +534,20 @@ class Controller:
                     cert_path=cert_path,
                     key_path=key_path
                 )
-            
-    
+
+        for idx in range(self._workers):
+            for plugin_name in self._plugins:
+
+                remote = remote_pool[idx]
+                plugin: Service = self._plugins[plugin_name].at(idx)
+                
+                await plugin.connect(
+                    (remote_copy.host, remote_copy.port + 1),
+                    cert_path=cert_path,
+                    key_path=key_path
+                )
+
+
     async def extend_client(
         self,
         remote: Message,
@@ -655,3 +823,16 @@ class Controller:
                 tcp_connection.close()
             ) for tcp_connection in self._tcp_pool
         ])
+
+        for group in self._plugins.values():
+
+            services: List[Service] = [
+                service for service in group.each()
+            ]
+
+            await asyncio.gather(*[
+                service.close() for service in services
+            ])
+
+        if self._waiter:
+            self._waiter.set_result(None)

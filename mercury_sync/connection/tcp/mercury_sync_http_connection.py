@@ -113,10 +113,6 @@ class MercurySyncHTTPConnection(MercurySyncTCPConnection):
 
         else:
             http_socket = worker_socket
-            host, port = http_socket.getsockname()
-            
-            self.host = host
-            self.port = port
  
         transport, _ = await self._loop.create_connection(
             lambda: MercurySyncTCPClientProtocol(

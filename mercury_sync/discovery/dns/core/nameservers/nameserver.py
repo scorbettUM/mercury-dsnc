@@ -13,6 +13,7 @@ class NameServer:
         self.data = [
             URL(url) if isinstance(url, str) else url for url in urls
         ]
+        
 
         self._failures = [0] * len(self.data)
         self.timestamp = 0

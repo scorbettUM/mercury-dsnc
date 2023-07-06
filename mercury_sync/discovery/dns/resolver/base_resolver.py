@@ -7,6 +7,7 @@ from mercury_sync.discovery.dns.core.url import (
 
 )
 from mercury_sync.discovery.dns.core.cache import CacheNode
+from mercury_sync.env import Env
 from mercury_sync.models.dns_query import DNSQuery
 from mercury_sync.models.dns_message import (
     DNSMessage
@@ -34,6 +35,8 @@ class BaseResolver:
         self,
         host: str,
         port: int,
+        instance_id: str,
+        env: Env,
         cache: CacheNode = None,
         query_timeout: float = 3.0,
         request_timeout: float = 5.0
@@ -47,8 +50,10 @@ class BaseResolver:
         self.client = DNSClient(
             host,
             port,
-            query_callback=self.query
+            instance_id,
+            env
         )
+
 
     def cache_message(self, query: DNSQuery):
         for _, record in query.to_record_data():
@@ -66,14 +71,14 @@ class BaseResolver:
     async def query(
         self,
         fqdn: str,
-        qtype: RecordType=RecordType.ANY,
+        record_type: RecordType=RecordType.ANY,
         skip_cache: bool=False
     ) -> Tuple[DNSMessage, bool]:
         
         if fqdn.endswith('.'):
             fqdn = fqdn[:-1]
 
-        if qtype == RecordType.ANY:
+        if record_type == RecordType.ANY:
             try:
                 addr = URL(
                     fqdn,
@@ -87,12 +92,12 @@ class BaseResolver:
 
             else:
                 fqdn = ptr_name
-                qtype = RecordType.PTR
+                record_type = RecordType.PTR
 
         return await asyncio.wait_for(
             self._query(
                 fqdn, 
-                qtype,
+                record_type,
                 skip_cache
             ),
             timeout=self.query_timeout
@@ -101,11 +106,11 @@ class BaseResolver:
     async def request(
         self, 
         fqdn: str, 
-        qtype: RecordType, 
+        message: DNSMessage, 
         url: URL
     ):
 
-        result = await self.client.query(fqdn, qtype, url)
+        result = await self.client.send(fqdn, message, url)
         if result.query_domains[0].name != fqdn:
             raise DNSError(-1, 'Question section mismatch')
         

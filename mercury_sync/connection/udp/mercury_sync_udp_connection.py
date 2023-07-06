@@ -357,7 +357,6 @@ class MercurySyncUDPConnection:
 
         incoming_host, incoming_port = addr
 
-
         if message_type == 'request':
             self._pending_responses.append(
                 asyncio.create_task(

@@ -10,6 +10,7 @@ from pydantic import (
     BaseModel,
     StrictStr,
     StrictInt,
+    StrictFloat,
     IPvAnyAddress,
 )
 
@@ -48,6 +49,7 @@ class DNSEntry(BaseModel):
     domain_values: Dict[StrictStr, StrictStr]={}
     domain_targets: Tuple[IPvAnyAddress]
     record_types: List[RecordType]=["PTR", "SRV", "TXT"]
+    time_to_live: Union[StrictInt, StrictFloat]=-1
 
     def to_domain(
         self,

@@ -3,26 +3,26 @@ from dotenv import dotenv_values
 from typing import (
     Dict, 
     Union, 
-    Callable
+    Type
 )
-from .registrar_env import RegistrarEnv
 from .env import Env
+from .monitor_env import MonitorEnv
+from .registrar_env import RegistrarEnv
 
 
 PrimaryType=Union[str, int, bool, float, bytes]
 
 
 def load_env(
-    envars: Dict[
-        str, 
-        Callable[
-            [str],
-            PrimaryType
-        ]
+    env: Union[
+        Type[Env],
+        Type[MonitorEnv],
+        Type[RegistrarEnv]
     ],  
-    env_file: str=None,
-    env_type: Union[RegistrarEnv, Env]=Env 
-) -> Union[RegistrarEnv, Env]:
+    env_file: str=None
+):
+    
+    envars = env.types_map()
     
     if env_file is None:
         env_file = '.env'
@@ -44,6 +44,6 @@ def load_env(
 
         values.update(env_file_values)
 
-    return env_type(**{
+    return env(**{
         name: value for name, value in values.items() if value is not None
     })
