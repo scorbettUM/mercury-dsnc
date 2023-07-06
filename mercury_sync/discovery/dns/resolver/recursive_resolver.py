@@ -23,7 +23,12 @@ from mercury_sync.discovery.dns.core.record.record_data_types import (
     SOARecordData,
     NSRecordData
 )
-from mercury_sync.env import Env
+from mercury_sync.env import (
+    Env, 
+    RegistrarEnv, 
+    load_env
+)
+from mercury_sync.env.time_parser import TimeParser
 from typing import Tuple, Optional, List
 from .base_resolver import BaseResolver
 from .memoizer import Memoizer
@@ -40,24 +45,22 @@ class RecursiveResolver(BaseResolver):
         port: int,
         instance_id: str,
         env: Env,
-        cache: CacheNode = None,
-        query_timeout: float = 3.0,
-        request_timeout: float = 5.0,
-        max_tick: int=5
+        cache: CacheNode = None
     ):
         super().__init__(
             host,
             port,
             instance_id,
             env,
-            cache=cache,
-            query_timeout=query_timeout,
-            request_timeout=request_timeout
+            cache=cache
         )
 
-        self.max_tick = max_tick
         self.types_map = RecordTypesMap()
         self._nameserver_urls: List[str] = []
+
+        registrar_env: RegistrarEnv = load_env(RegistrarEnv)
+
+        self._maximum_tries = registrar_env.MERCURY_SYNC_RESOLVER_MAXIMUM_TRIES
 
     def add_nameserver(
         self,
@@ -140,12 +143,15 @@ class RecursiveResolver(BaseResolver):
         fqdn: str, 
         record_type: int,
         skip_cache: bool=False
-    ):
+    ) -> DNSMessage:
+        
+        current_try_count = 0
+
         return await self._query_tick(
             fqdn, 
             record_type, 
-            self.max_tick,
-            skip_cache
+            skip_cache,
+            current_try_count
         )
 
     def _get_matching_nameserver(self, fqdn: str):
@@ -191,15 +197,15 @@ class RecursiveResolver(BaseResolver):
         return NameServer(hosts)
 
     @memoizer.memoize_async(
-        lambda _, fqdn, record_type, _tick, skip_cache: (fqdn, record_type)
+        lambda _, fqdn, record_type, skip_cache: (fqdn, record_type)
     )
     async def _query_tick(
         self, 
         fqdn: str, 
         record_type: int,
-        tick: int,
-        skip_cache: bool
-    ) -> Tuple[DNSMessage, bool]:
+        skip_cache: bool,
+        current_try_count: int
+    ):
         
         msg = DNSMessage()
         msg.query_domains.append(
@@ -211,18 +217,16 @@ class RecursiveResolver(BaseResolver):
         )
 
         has_result = False
-        from_cache = False
 
         if skip_cache is False:
             has_result, fqdn = self.query_cache(msg, fqdn, record_type)
-            from_cache = has_result
 
         last_err = None
         nameserver = self._get_matching_nameserver(fqdn)
 
-        while not has_result and tick > 0:
+        while not has_result and current_try_count < self._maximum_tries:
 
-            tick -= 1
+            current_try_count += 1
 
             for url in nameserver.iter():
                 try:
@@ -230,8 +234,8 @@ class RecursiveResolver(BaseResolver):
                         msg, 
                         fqdn, 
                         record_type, 
-                        url, 
-                        tick
+                        url,
+                        current_try_count
                     )
 
                     nameserver = NameServer(
@@ -247,17 +251,18 @@ class RecursiveResolver(BaseResolver):
             else:
                 raise last_err or Exception('Unknown error')
 
+
         assert has_result, 'Maximum nested query times exceeded'
 
-        return msg, from_cache
+        return msg
 
     async def _query_remote(
         self, 
         msg: DNSMessage, 
         fqdn: str, 
         record_type: RecordType,
-        url: URL, 
-        tick: int
+        url: URL,
+        current_try_count: int
     ):
         
         result: DNSMessage = await self.request(
@@ -340,7 +345,7 @@ class RecursiveResolver(BaseResolver):
         # In case they are not, query from remote.
         if len(namespace_ips) < 1 and len(hosts) > 0:
 
-            tick -= 1
+            current_try_count += 1
 
             for record_type in self.nameserver_types:
                 for host in hosts:
@@ -349,7 +354,8 @@ class RecursiveResolver(BaseResolver):
                             self._query_tick(
                                 host, 
                                 record_type, 
-                                tick
+                                False,
+                                current_try_count
                             )
                         )
 

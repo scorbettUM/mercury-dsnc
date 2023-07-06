@@ -54,7 +54,7 @@ class URL:
             self.host = host
 
         self.is_ssl = False
-        if self.parsed.scheme == 'tcps' or self.parsed.scheme == 'https':
+        if self.parsed.scheme in ['tcps', 'https', 'msyncs']:
             self.is_ssl = True
 
         self.ip_type = self.get_ip_type(
@@ -92,6 +92,8 @@ class URL:
             self.host, 
             self.port
         )
+
+        self.is_msync = self.parsed.scheme in ['msync', 'msyncs']
 
     def __str__(self):
         return self.url

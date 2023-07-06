@@ -7,7 +7,12 @@ from mercury_sync.discovery.dns.core.url import (
 
 )
 from mercury_sync.discovery.dns.core.cache import CacheNode
-from mercury_sync.env import Env
+from mercury_sync.env import (
+    Env, 
+    RegistrarEnv, 
+    load_env
+)
+from mercury_sync.env.time_parser import TimeParser
 from mercury_sync.models.dns_query import DNSQuery
 from mercury_sync.models.dns_message import (
     DNSMessage
@@ -37,16 +42,12 @@ class BaseResolver:
         port: int,
         instance_id: str,
         env: Env,
-        cache: CacheNode = None,
-        query_timeout: float = 3.0,
-        request_timeout: float = 5.0
+        cache: CacheNode = None
     ):
         self.host = host
         self.port = port
         self._queries = {}
         self.cache = cache or CacheNode()
-        self.request_timeout = request_timeout
-        self.query_timeout = query_timeout
         self.client = DNSClient(
             host,
             port,
@@ -54,6 +55,11 @@ class BaseResolver:
             env
         )
 
+        registrar_env: RegistrarEnv = load_env(RegistrarEnv)
+        
+        self._request_timeout = TimeParser(
+            registrar_env.MERCURY_SYNC_RESOLVER_REQUEST_TIMEOUT
+        ).time
 
     def cache_message(self, query: DNSQuery):
         for _, record in query.to_record_data():
@@ -65,7 +71,7 @@ class BaseResolver:
             domain.lstrip('.') for domain in domains
         ]
 
-    async def _query(self, _fqdn: str, _record_type: RecordType) -> Tuple[DNSMessage, bool]:
+    async def _query(self, _fqdn: str, _record_type: RecordType) -> DNSMessage:
         raise NotImplementedError
 
     async def query(
@@ -73,7 +79,7 @@ class BaseResolver:
         fqdn: str,
         record_type: RecordType=RecordType.ANY,
         skip_cache: bool=False
-    ) -> Tuple[DNSMessage, bool]:
+    ):
         
         if fqdn.endswith('.'):
             fqdn = fqdn[:-1]
@@ -94,23 +100,32 @@ class BaseResolver:
                 fqdn = ptr_name
                 record_type = RecordType.PTR
 
-        return await asyncio.wait_for(
-            self._query(
-                fqdn, 
-                record_type,
-                skip_cache
-            ),
-            timeout=self.query_timeout
-        )
+        try:
+
+            return await asyncio.wait_for(
+                self._query(
+                    fqdn, 
+                    record_type,
+                    skip_cache
+                ),
+                timeout=self._request_timeout
+            )
+        
+        except asyncio.TimeoutError:
+            return DNSMessage()
 
     async def request(
         self, 
         fqdn: str, 
         message: DNSMessage, 
         url: URL
-    ):
+    ) -> DNSMessage:
 
         result = await self.client.send(fqdn, message, url)
+
+        if len(result.query_domains) < 1:
+            return False, fqdn, []
+
         if result.query_domains[0].name != fqdn:
             raise DNSError(-1, 'Question section mismatch')
         

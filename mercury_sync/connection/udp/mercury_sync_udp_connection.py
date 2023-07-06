@@ -237,7 +237,6 @@ class MercurySyncUDPConnection:
                             cert_path=self._udp_cert_path,
                             key_path=self._udp_key_path
                         )
-                    
 
                     self._pending_responses.pop()
     

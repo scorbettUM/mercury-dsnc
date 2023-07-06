@@ -283,26 +283,6 @@ class Controller(Generic[*P]):
                 tcp_connection.events[method_name] = method
 
                 self._events[method_name] = method
-
-
-        
-        for plugin_group in self._plugins.values():
-            for plugin in plugin_group.each(): 
-                
-                if isinstance(plugin, Controller):
-                    for tcp_connection, udp_connection in zip(
-                        plugin._udp_pool,
-                        plugin._tcp_pool
-                    ):
-                        udp_connection.events.update(self._events)
-                        tcp_connection.events.update(self._events)
-
-                elif isinstance(plugin, Service):
-                    plugin._udp_connection.events.update(self._events)
-                    plugin._tcp_connection.events.update(self._events)
-
-                plugin._events.update(self._events)
-
     
     def __getitem__(self, name: str):
         return self._plugins.get(name)
@@ -338,19 +318,6 @@ class Controller(Generic[*P]):
                 key_path=key_path,
                 worker_socket=tcp_socket
             )
-
-    def update_parsers(
-        self,
-        parsers: Dict[str, Message]
-    ):
-
-        for udp_connection, tcp_connection in zip(
-            self._udp_pool,
-            self._tcp_pool
-        ):
-            udp_connection.parsers.update(parsers)
-            tcp_connection.parsers.update(parsers)
-
 
     async def start_server(
       self,
@@ -448,8 +415,6 @@ class Controller(Generic[*P]):
                         key_path=key_path
                     )
 
-                    plugin.update_parsers(self._parsers)
-
         udp_sockets = [
             udp_connection.udp_socket for udp_connection in self._udp_pool
         ]
@@ -473,8 +438,8 @@ class Controller(Generic[*P]):
                     cert_path=cert_path,
                     key_path=key_path
                 )
-
-                plugin.update_parsers(self._parsers)
+        
+        await self._copy_to_plugins()
 
 
     async def start_client(
@@ -546,6 +511,35 @@ class Controller(Generic[*P]):
                     cert_path=cert_path,
                     key_path=key_path
                 )
+
+        await self._copy_to_plugins()
+
+    async def _copy_to_plugins(self):
+
+        for plugin_group in self._plugins.values():
+            for plugin in plugin_group.each(): 
+                
+                if isinstance(plugin, Controller):
+                    for tcp_connection, udp_connection in zip(
+                        plugin._udp_pool,
+                        plugin._tcp_pool
+                    ):
+                        udp_connection.events.update(self._events)
+                        tcp_connection.events.update(self._events)
+
+                        udp_connection.parsers.update(self._parsers)
+                        tcp_connection.parsers.update(self._parsers)
+
+                elif isinstance(plugin, Service):
+                    plugin._udp_connection.events.update(self._events)
+                    plugin._tcp_connection.events.update(self._events)
+
+                    plugin._udp_connection.parsers.update(self._parsers)
+                    plugin._tcp_connection.parsers.update(self._parsers)
+                
+                plugin._events.update(self._events)
+                plugin._parsers.update(self._parsers)
+
 
 
     async def extend_client(
@@ -645,6 +639,8 @@ class Controller(Generic[*P]):
             
         self._udp_pool.extend(udp_pool)
         self._tcp_pool.extend(tcp_pool)
+
+        self._copy_to_plugins()
 
         return port
     

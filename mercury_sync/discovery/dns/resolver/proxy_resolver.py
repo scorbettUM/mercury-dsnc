@@ -54,8 +54,6 @@ class ProxyResolver(BaseResolver):
         instance_id: str,
         env: Env,
         cache: CacheNode = None,
-        query_timeout: float = 3.0,
-        request_timeout: float = 5.0,
         proxies: Optional[List[Proxy]]=None
     ):
         super().__init__(
@@ -63,9 +61,7 @@ class ProxyResolver(BaseResolver):
             port,
             instance_id,
             env,
-            cache=cache,
-            query_timeout=query_timeout,
-            request_timeout=request_timeout
+            cache=cache
         )
 
         if proxies is None:
@@ -170,11 +166,9 @@ class ProxyResolver(BaseResolver):
         )
 
         has_result = False
-        from_cache = False
 
         if skip_cache is False:
             has_result, fqdn = self.query_cache(msg, fqdn, record_type)
-            from_cache = has_result
 
         while not has_result:
             nameserver = self._get_matching_nameserver(fqdn)
@@ -195,5 +189,5 @@ class ProxyResolver(BaseResolver):
 
                     break
 
-        return msg, from_cache
+        return msg
 

@@ -1,3 +1,4 @@
+import asyncio
 import socket
 from mercury_sync.connection.base.connection_type import ConnectionType
 from mercury_sync.connection.tcp import (
@@ -5,7 +6,12 @@ from mercury_sync.connection.tcp import (
     MercurySyncTCPConnection
 )
 from mercury_sync.connection.udp import MercurySyncUDPConnection
-from mercury_sync.env import Env, RegistrarEnv, load_env
+from mercury_sync.env import (
+    Env, 
+    RegistrarEnv, 
+    load_env
+)
+from mercury_sync.env.time_parser import TimeParser
 from mercury_sync.models.dns_message import DNSMessage
 from mercury_sync.models.http_message import HTTPMessage
 from mercury_sync.discovery.dns.core.url import URL
@@ -31,7 +37,7 @@ class DNSClient:
 
         self._client_config = (
             host,
-            port,
+            port + 2,
             instance_id,
             env
         )
@@ -66,9 +72,14 @@ class DNSClient:
             registrar_env.MERCURY_SYNC_RESOLVER_CONNECTION_TYPE
         )
 
+        self._request_timeout = TimeParser(
+            registrar_env.MERCURY_SYNC_RESOLVER_REQUEST_TIMEOUT
+        ).time
+
         self._connections: Dict[Tuple[str, int], bool] = {}
         self.cert_paths: Dict[str, str] = {}
         self.key_paths: Dict[str, str] = {}
+
 
     async def connect_client(
         self,
@@ -118,6 +129,33 @@ class DNSClient:
         data: DNSMessage,
         url: URL
     ):
+        if url.is_msync:
+                
+            return await asyncio.wait_for(
+                self._send_msync(
+                    event_name,
+                    data,
+                    url
+                ),
+                timeout=self._request_timeout
+            ) 
+
+        else:
+
+            return await asyncio.wait_for(
+                self._send(
+                    event_name,
+                    data,
+                    url
+                ),
+                timeout=self._request_timeout
+            )
+    async def _send(
+        self,
+        event_name: str,
+        data: DNSMessage,
+        url: URL
+    ):
         
         if self._client is None:
             await self.connect_client(
@@ -147,6 +185,36 @@ class DNSClient:
             response = await self._client.send_bytes(
                 event_name,
                 data.to_udp_bytes(),
+                url.address
+            )
+
+            return DNSMessage.parse(response)
+        
+    async def _send_msync(
+        self,
+        event_name: str,
+        data: DNSMessage,
+        url: URL
+    ):
+        if self._client is None:
+            await self.connect_client(
+                url
+            )
+        
+        if self._client.connection_type == ConnectionType.TCP:
+            response = await self._client.send(
+                event_name,
+                data,
+                url.address
+            )
+
+            return DNSMessage.parse(response)
+        
+        else:
+
+            response = await self._client.send(
+                event_name,
+                data,
                 url.address
             )
 

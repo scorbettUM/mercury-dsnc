@@ -102,6 +102,20 @@ class Registrar(Controller):
 
             return namserver_url
 
+    @server()
+    async def update_registered(
+        self,
+        shard_id: int,
+        registration: DNSMessage
+    ):
+        for record in registration.query_domains:
+            self.resolver.add_to_cache(
+                record.name,
+                record.record_type,
+                record.data
+            )
+
+        return registration
 
 
     @server()
@@ -160,10 +174,31 @@ class Registrar(Controller):
             ]
         )
     
+    @client('update_registered')
+    async def submt_registration(
+        self,
+        host: str,
+        port: int,
+        entry: DNSEntry
+    ) -> Call[DNSMessage]:
+        return DNSMessage(
+            host=host,
+            port=port,
+            query_domains=[
+                Record(
+                    name=domain,
+                    record_type=record.rtype,
+                    data=record,
+                    ttl=entry.time_to_live
+
+                ) for domain, record in entry.to_record_data()
+            ]
+        )
+    
     async def query(
         self,
         entry: DNSEntry
-    ):
+    ) -> List[DNSEntry]:
 
         nameserver_url = self._next_nameserver_url()
 
@@ -184,12 +219,70 @@ class Registrar(Controller):
 
             self._connected_namservers[(host, port)] = True
 
-        return await self.submit_query(
+        _, results = await self.submit_query(
             host,
             port,
             entry
         )
 
+        entries: List[DNSEntry]=[]
+
+        for message in results.messages:
+            for answer in message.query_answers:
+
+                entries.append(
+                    DNSEntry.from_record_data(
+                        answer.name,
+                        answer.data,
+                        entry
+                    )
+                )
+                
+        return entries
+    
+    async def register(
+        self,
+        entry: DNSEntry
+    ) -> List[DNSEntry]:
+        
+        nameserver_url = self._next_nameserver_url()
+
+        host = nameserver_url.host
+        port = nameserver_url.port
+
+        if nameserver_url.ip_type is not None:
+            host = socket.gethostbyname(nameserver_url.host)
+
+        if not self._connected_namservers.get((host, port)):
+            
+            await self.start_client(
+                DNSMessage(
+                    host=host,
+                    port=port
+                )
+            )
+
+            self._connected_namservers[(host, port)] = True
+
+        _, results = await self.submt_registration(
+            host,
+            port,
+            entry
+        )
+
+        entries: List[DNSEntry]=[]
+
+        for answer in results.query_domains:
+
+                entries.append(
+                    DNSEntry.from_record_data(
+                        answer.name,
+                        answer.data,
+                        entry
+                    )
+                )
+                
+        return entries
 
 
         

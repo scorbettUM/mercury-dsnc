@@ -1,4 +1,4 @@
-from typing import List, Iterable, Generic, TypeVarTuple, Union, TypeVar
+from typing import List, Iterable, Generic, TypeVarTuple, Union
 from .service import Service
 
 
@@ -16,7 +16,6 @@ class PluginGroup(Generic[*P]):
 
     @property
     def one(self) -> Union[*P]:
-
         service: Service = self._services[self._current_idx]
         self._current_idx = (self._current_idx + 1)%self._services_count
 
@@ -28,4 +27,3 @@ class PluginGroup(Generic[*P]):
     
     def at(self, idx: int) -> Union[*P]:
         return self._services[idx]
-    

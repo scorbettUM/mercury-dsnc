@@ -38,10 +38,7 @@ class DNSResolver:
         resolver: Literal["proxy", "recursive"]="proxy",
         proxies: Optional[
             List[Proxy]
-        ]=None, 
-        max_tick: int=5,
-        query_timeout: float = 3.0,
-        request_timeout: float = 5.0
+        ]=None
     ) -> None:
         
         if resolver == "proxy":
@@ -50,9 +47,7 @@ class DNSResolver:
                 port,
                 instance_id,
                 env,
-                proxies=proxies,
-                query_timeout=query_timeout,
-                request_timeout=request_timeout
+                proxies=proxies
             )
 
         else:
@@ -60,10 +55,7 @@ class DNSResolver:
                 host,
                 port,
                 instance_id,
-                env,
-                max_tick=max_tick,
-                query_timeout=query_timeout,
-                request_timeout=request_timeout
+                env
             )
 
         self.types_map = RecordTypesMap()
@@ -121,8 +113,14 @@ class DNSResolver:
         skip_cache: bool=False
     ) -> Tuple[DNSMessage, bool]:
 
-        return await self.resolver.query(
-            domain_name,
-            record_type=record_type,
-            skip_cache=skip_cache
-        )
+        try:
+            result = await self.resolver.query(
+                domain_name,
+                record_type=record_type,
+                skip_cache=skip_cache
+            )
+
+            return result, True
+        
+        except asyncio.TimeoutError:
+            return DNSMessage(), False

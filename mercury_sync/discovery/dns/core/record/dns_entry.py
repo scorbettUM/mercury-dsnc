@@ -1,10 +1,12 @@
+from __future__ import annotations
 from mercury_sync.discovery.dns.core.record.record_data_types import (
     ARecordData,
     AAAARecordData,
     CNAMERecordData,
     PTRRecordData,
     SRVRecordData,
-    TXTRecordData
+    TXTRecordData,
+    RecordType
 )
 from pydantic import (
     BaseModel,
@@ -26,15 +28,7 @@ from typing import (
 
 
 DomainProtocol = Literal["tcp", "udp"]
-RecordType = Literal["A", "AAAA", "CNAME", "PTR", "SRV", "TXT"]
-RecordData = Union[
-    ARecordData,
-    AAAARecordData,
-    CNAMERecordData,
-    PTRRecordData,
-    SRVRecordData,
-    TXTRecordData
-]
+RecordTypeName = Literal["A", "AAAA", "CNAME", "PTR", "SRV", "TXT"]
 
 
 
@@ -48,12 +42,13 @@ class DNSEntry(BaseModel):
     domain_port: Optional[StrictInt]
     domain_values: Dict[StrictStr, StrictStr]={}
     domain_targets: Tuple[IPvAnyAddress]
-    record_types: List[RecordType]=["PTR", "SRV", "TXT"]
+    record_type: Optional[RecordType]
+    record_types: List[RecordTypeName]=["PTR", "SRV", "TXT"]
     time_to_live: Union[StrictInt, StrictFloat]=-1
 
     def to_domain(
         self,
-        record_type: RecordType
+        record_type: RecordTypeName
     ):
 
         domain = self.domain_name
@@ -70,7 +65,7 @@ class DNSEntry(BaseModel):
 
     def to_data(
         self,
-        record_type: RecordType
+        record_type: RecordTypeName
     ):
 
         domain_target = str(self.domain_targets[0])
@@ -137,7 +132,8 @@ class DNSEntry(BaseModel):
             CNAMERecordData,
             SRVRecordData,
             TXTRecordData
-        ]
+        ],
+        entry: DNSEntry
     ):
         
         if isinstance(
@@ -145,15 +141,33 @@ class DNSEntry(BaseModel):
             (
                 ARecordData, 
                 AAAARecordData, 
-                CNAMERecordData,
+                CNAMERecordData
             )
         ):
             return DNSEntry(
+                instance_name=entry.instance_name,
+                application_protocol=entry.application_protocol,
+                domain_protocol=entry.domain_protocol.strip('_'),
                 domain_name=record_name,
                 domain_targets=(
                     record_data.data,
                 ),
-                record_type=record_data.rtype.name
+                record_type=record_data.rtype
+            )
+        
+        elif isinstance(record_data, PTRRecordData):
+
+            record_ip = record_name.strip('.in-addr.arpa')
+
+            return DNSEntry(
+                instance_name=entry.instance_name,
+                application_protocol=entry.application_protocol,
+                domain_protocol=entry.domain_protocol.strip('_'),
+                domain_name=record_data.data,
+                domain_targets=(
+                    record_ip,
+                ),
+                record_type=record_data.rtype
             )
         
         elif isinstance(record_data, SRVRecordData):
@@ -171,7 +185,7 @@ class DNSEntry(BaseModel):
             return DNSEntry(
                 instance_name=instance_name,
                 application_protocol=application_protocol,
-                domain_protocol=domain_protocol,
+                domain_protocol=domain_protocol.strip('_'),
                 domain_name=domain_name,
                 domain_port=record_data.port,
                 domain_priority=record_data.priority,
@@ -179,7 +193,7 @@ class DNSEntry(BaseModel):
                 domain_targets=(
                     record_data.hostname,
                 ),
-                record_type=record_data.rtype.name
+                record_type=record_data.rtype
             )
         
         else:
@@ -195,12 +209,15 @@ class DNSEntry(BaseModel):
             domain_target = record_values.get("service")
 
             return DNSEntry(
+                instance_name=entry.instance_name,
+                application_protocol=entry.application_protocol,
+                domain_protocol=entry.domain_protocol.strip('_'),
                 domain_name=record_name,
                 domain_targets=(
                     domain_target,
                 ),
                 domain_values=record_values,
-                record_type=record_data.rtype.value
+                record_type=record_data.rtype
             )
 
 
