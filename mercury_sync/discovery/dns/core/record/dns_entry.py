@@ -13,7 +13,7 @@ from pydantic import (
     StrictStr,
     StrictInt,
     StrictFloat,
-    IPvAnyAddress,
+    IPvAnyAddress
 )
 
 from typing import (
@@ -41,7 +41,9 @@ class DNSEntry(BaseModel):
     domain_weight: StrictInt=0
     domain_port: Optional[StrictInt]
     domain_values: Dict[StrictStr, StrictStr]={}
-    domain_targets: Tuple[IPvAnyAddress]
+    domain_targets: Tuple[
+        Union[IPvAnyAddress, StrictStr]
+    ]
     record_type: Optional[RecordType]
     record_types: List[RecordTypeName]=["PTR", "SRV", "TXT"]
     time_to_live: Union[StrictInt, StrictFloat]=-1
@@ -57,8 +59,7 @@ class DNSEntry(BaseModel):
              domain = f'{self.instance_name}._{self.application_protocol}._{self.domain_protocol}.{domain}'
 
         elif record_type == "PTR":
-            domain_target = str(self.domain_targets[0])
-            domain = f'{domain_target}.in-addr.arpa'
+            domain = f'{self.application_protocol}._{self.domain_protocol}.in-addr.arpa'
 
         return domain
 
@@ -88,7 +89,8 @@ class DNSEntry(BaseModel):
             )
         
         elif record_type == "PTR":
-            return PTRRecordData(self.domain_name)
+            domain_target = f'{self.instance_name}._{self.application_protocol}._{self.domain_protocol}.{self.domain_name}'
+            return PTRRecordData(domain_target)
         
         else:
             domain_target_value = f'service={domain_target}'
@@ -146,7 +148,7 @@ class DNSEntry(BaseModel):
         ):
             return DNSEntry(
                 instance_name=entry.instance_name,
-                application_protocol=entry.application_protocol,
+                application_protocol=entry.application_protocol.removeprefix('_'),
                 domain_protocol=entry.domain_protocol.strip('_'),
                 domain_name=record_name,
                 domain_targets=(
@@ -157,15 +159,17 @@ class DNSEntry(BaseModel):
         
         elif isinstance(record_data, PTRRecordData):
 
-            record_ip = record_name.strip('.in-addr.arpa')
+            domain_segments = record_data.data.split(".")
+            instance_name, application_protocol, domain_protocol = domain_segments[:3]
+            domain_name = '.'.join(domain_segments[3:])
 
             return DNSEntry(
-                instance_name=entry.instance_name,
-                application_protocol=entry.application_protocol,
-                domain_protocol=entry.domain_protocol.strip('_'),
+                instance_name=instance_name,
+                application_protocol=application_protocol.removeprefix('_'),
+                domain_protocol=domain_protocol.removeprefix('_'),
                 domain_name=record_data.data,
                 domain_targets=(
-                    record_ip,
+                    record_data.data,
                 ),
                 record_type=record_data.rtype
             )
@@ -173,19 +177,14 @@ class DNSEntry(BaseModel):
         elif isinstance(record_data, SRVRecordData):
 
             domain_segments = record_name.split(".")
-            
-            instance_name = None
-            application_protocol = None
-
             instance_name, application_protocol, domain_protocol = domain_segments[:3]
-
             domain_name = '.'.join(domain_segments[3:])
 
 
             return DNSEntry(
                 instance_name=instance_name,
-                application_protocol=application_protocol,
-                domain_protocol=domain_protocol.strip('_'),
+                application_protocol=application_protocol.removeprefix('_'),
+                domain_protocol=domain_protocol.removeprefix('_'),
                 domain_name=domain_name,
                 domain_port=record_data.port,
                 domain_priority=record_data.priority,
@@ -210,8 +209,8 @@ class DNSEntry(BaseModel):
 
             return DNSEntry(
                 instance_name=entry.instance_name,
-                application_protocol=entry.application_protocol,
-                domain_protocol=entry.domain_protocol.strip('_'),
+                application_protocol=entry.application_protocol.removeprefix('_'),
+                domain_protocol=entry.domain_protocol.removeprefix('_'),
                 domain_name=record_name,
                 domain_targets=(
                     domain_target,

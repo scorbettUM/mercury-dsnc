@@ -63,7 +63,7 @@ class DNSQuery(BaseModel):
              domain = f'{self.instance_name}._{self.application_protocol}._{self.domain_protocol}.{domain}'
 
         elif record_type == "PTR":
-            domain_target = str(self.domain_targets[0])
+            domain_target = f'{self.instance_name}._{self.application_protocol}._{self.domain_protocol}'
             domain = f'{domain_target}.in-addr.arpa'
 
         return domain
