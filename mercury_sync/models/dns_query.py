@@ -41,7 +41,7 @@ RecordData = Union[
 class DNSQuery(BaseModel):
     query_id: StrictInt
     instance_name: Optional[StrictStr]
-    application_protocol: Optional[StrictStr]
+    service_name: Optional[StrictStr]
     domain_protocol: Optional[DomainProtocol]
     domain_name: StrictStr
     domain_priority: StrictInt=10
@@ -60,10 +60,10 @@ class DNSQuery(BaseModel):
         domain = self.domain_name
 
         if record_type == "SRV":
-             domain = f'{self.instance_name}._{self.application_protocol}._{self.domain_protocol}.{domain}'
+             domain = f'{self.instance_name}._{self.service_name}._{self.domain_protocol}.{domain}'
 
         elif record_type == "PTR":
-            domain_target = f'{self.instance_name}._{self.application_protocol}._{self.domain_protocol}'
+            domain_target = f'{self.service_name}._{self.domain_protocol}'
             domain = f'{domain_target}.in-addr.arpa'
 
         return domain
@@ -162,10 +162,10 @@ class DNSQuery(BaseModel):
             domain_segments = record_name.split(".")
             
             instance_name = None
-            application_protocol = None
+            service_name = None
 
             if len(domain_segments) == 4:
-                instance_name, application_protocol, domain_protocol = domain_segments[:3]
+                instance_name, service_name, domain_protocol = domain_segments[:3]
             elif len(domain_segments) == 3:
                 instance_name, domain_protocol = domain_segments[:2]
 
@@ -177,7 +177,7 @@ class DNSQuery(BaseModel):
 
             return DNSQuery(
                 instance_name=instance_name,
-                application_protocol=application_protocol,
+                service_name=service_name,
                 domain_protocol=domain_protocol,
                 domain_name=domain_name,
                 domain_port=record_data.port,
