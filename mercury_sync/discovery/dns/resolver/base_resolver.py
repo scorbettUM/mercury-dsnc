@@ -13,7 +13,7 @@ from mercury_sync.env import (
     load_env
 )
 from mercury_sync.env.time_parser import TimeParser
-from mercury_sync.models.dns_query import DNSQuery
+from mercury_sync.models.dns_entry import DNSEntry
 from mercury_sync.models.dns_message import (
     DNSMessage
 )
@@ -61,7 +61,7 @@ class BaseResolver:
             registrar_env.MERCURY_SYNC_RESOLVER_REQUEST_TIMEOUT
         ).time
 
-    def cache_message(self, query: DNSQuery):
+    def cache_message(self, query: DNSEntry):
         for _, record in query.to_record_data():
             if query.time_to_live > 0 and record.rtype != RecordType.SOA:
                 self.cache.add(record=record)

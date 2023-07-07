@@ -34,6 +34,7 @@ RecordTypeName = Literal["A", "AAAA", "CNAME", "PTR", "SRV", "TXT"]
 
 
 service_pattern = re.compile(r'([a-zA-Z0-9\-]{1,256})?(\.?\_)([a-zA-Z0-9\-]{1,256})(\._)([udp|tcp]*)(\.)([a-zA-Z0-9\-]{1,256})(\.)([a-zA-Z0-9]{2,5})')
+ptr_service_pattern = re.compile(r'([a-zA-Z0-9\-]{1,256})(\._)([udp|tcp]*)(\.)([a-zA-Z0-9\-]{1,256})(\.)([a-zA-Z0-9]{2,5})')
 
 
 class DNSEntry(BaseModel):
@@ -61,22 +62,49 @@ class DNSEntry(BaseModel):
         if service_pattern.match(url) is None:
             raise InvalidServiceURLError(url)
 
-        return [
+        segments = [
             segment for segment in service_pattern.split(url) if segment.isalnum()
         ]
+
+        instance_name, service_name, domain_protocol = segments[:3]
+        domain_name = '.'.join(segments[3:])
+
+        return (
+            instance_name,
+            service_name,
+            domain_protocol,
+            domain_name
+        )
+    
+    @classmethod
+    def to_ptr_segments(cls, url: str):
+
+        if ptr_service_pattern.match(url) is None:
+            raise InvalidServiceURLError(url)
+
+        segments =  [
+            segment for segment in ptr_service_pattern.split(url) if segment.isalnum()
+        ]
+
+        service_name, domain_protocol = segments[:2]
+        domain_name = '.'.join(segments[2:])
+
+        return (
+            service_name,
+            domain_protocol,
+            domain_name
+        )
 
     def to_domain(
         self,
         record_type: RecordTypeName
     ):
 
-        domain = self.domain_name
-
-        if record_type == "SRV":
-             domain = f'{self.instance_name}._{self.service_name}._{self.domain_protocol}.{domain}'
-
-        elif record_type == "PTR":
+        if record_type == "PTR":
             domain = f'{self.service_name}._{self.domain_protocol}.in-addr.arpa'
+
+        else:
+             domain = f'{self.instance_name}._{self.service_name}._{self.domain_protocol}.{self.domain_name}'
 
         return domain
 
@@ -158,9 +186,25 @@ class DNSEntry(BaseModel):
             CNAMERecordData,
             SRVRecordData,
             TXTRecordData
-        ],
-        entry: DNSEntry
+        ]
     ):
+        
+        if record_data.rtype == RecordType.PTR:
+            (
+                instance_name, 
+                service_name, 
+                domain_protocol,
+                domain_name
+            ) = DNSEntry.to_segments(record_data.data)
+
+        else:
+            
+            (
+                instance_name, 
+                service_name, 
+                domain_protocol,
+                domain_name
+            ) = DNSEntry.to_segments(record_name)
         
         if isinstance(
             record_data, 
@@ -171,9 +215,9 @@ class DNSEntry(BaseModel):
             )
         ):
             return DNSEntry(
-                instance_name=entry.instance_name,
-                service_name=entry.service_name.removeprefix('_'),
-                domain_protocol=entry.domain_protocol.strip('_'),
+                instance_name=instance_name,
+                service_name=service_name,
+                domain_protocol=domain_protocol,
                 domain_name=record_name,
                 domain_targets=(
                     record_data.data,
@@ -183,16 +227,11 @@ class DNSEntry(BaseModel):
         
         elif isinstance(record_data, PTRRecordData):
 
-            domain_segments = DNSEntry.to_segments(record_data.data)
-
-            instance_name, service_name, domain_protocol = domain_segments[:3]
-            domain_name = '.'.join(domain_segments[3:])
-
             return DNSEntry(
                 instance_name=instance_name,
                 service_name=service_name,
                 domain_protocol=domain_protocol,
-                domain_name=record_data.data,
+                domain_name=domain_name,
                 domain_targets=(
                     record_data.data,
                 ),
@@ -200,11 +239,6 @@ class DNSEntry(BaseModel):
             )
         
         elif isinstance(record_data, SRVRecordData):
-
-            domain_segments = DNSEntry.to_segments(record_name)
-            instance_name, service_name, domain_protocol = domain_segments[:3]
-            domain_name = '.'.join(domain_segments[3:])
-
 
             return DNSEntry(
                 instance_name=instance_name,
@@ -233,9 +267,9 @@ class DNSEntry(BaseModel):
             domain_target = record_values.get("service")
 
             return DNSEntry(
-                instance_name=entry.instance_name,
-                service_name=entry.service_name.removeprefix('_'),
-                domain_protocol=entry.domain_protocol.removeprefix('_'),
+                instance_name=instance_name,
+                service_name=service_name,
+                domain_protocol=domain_protocol,
                 domain_name=record_name,
                 domain_targets=(
                     domain_target,

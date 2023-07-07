@@ -1,3 +1,4 @@
+import asyncio
 import socket
 from mercury_sync.discovery.dns.core.url import URL
 from mercury_sync.env import load_env, Env
@@ -9,12 +10,13 @@ from mercury_sync.models.dns_message import DNSMessage
 from mercury_sync.models.dns_message_group import DNSMessageGroup
 from mercury_sync.service.controller import Controller
 from mercury_sync.discovery.dns.core.record import (
-    DNSEntry,
     Record
 )
 from mercury_sync.discovery.dns.core.random import RandomIDGenerator
 
 from mercury_sync.discovery.dns.resolver import DNSResolver
+from mercury_sync.models.dns_entry import DNSEntry
+from mercury_sync.models.service import Service
 from mercury_sync.types import Call
 from typing import (
     Optional, 
@@ -233,8 +235,7 @@ class Registrar(Controller):
                 entries.append(
                     DNSEntry.from_record_data(
                         answer.name,
-                        answer.data,
-                        entry
+                        answer.data
                     )
                 )
                 
@@ -277,13 +278,111 @@ class Registrar(Controller):
                 entries.append(
                     DNSEntry.from_record_data(
                         answer.name,
-                        answer.data,
-                        entry
+                        answer.data
                     )
                 )
                 
-        return entries
-
-
+        return entries\
         
+    async def discover(self, url: str):
 
+        ptr_records = await self.get_ptr_records(url)
+
+        srv_records = await self.get_srv_records(ptr_records)
+        txt_records = await self.get_txt_records(ptr_records)  
+
+        services_data: Dict[str, Dict[str, Union[str, int,  Dict[str, str]]]] = {}
+        services: Dict[str, Service] = {}
+
+        for record in srv_records:
+            service_url = record.to_domain(record.record_type.name)
+
+
+            services_data[service_url] = {
+                "service_instance": record.instance_name,
+                "service_name": record.service_name,
+                "service_protocol": record.domain_protocol,
+                'service_url': service_url,
+                'service_ip': record.domain_targets[0],
+                'service_port': record.domain_port,
+                'service_context': {}
+            }
+
+
+        for record in txt_records:
+            service_url = record.domain_name
+
+            services_data[service_url]['service_context'].update(record.domain_values)
+
+        for service_url, data in services_data.items():
+            services[service_url] = Service(**data)
+
+
+        return list(services.values())
+
+    async def get_ptr_records(
+        self,
+        url: str
+    ):
+
+        (
+            service_name, 
+            domain_protocol,
+            domain_name
+        ) = DNSEntry.to_ptr_segments(url)
+
+    
+        return await self.query(
+            DNSEntry(
+                service_name=service_name,
+                domain_protocol=domain_protocol,
+                domain_name=domain_name,
+                record_types=["PTR"]
+            )
+        )
+    
+    async def get_srv_records(
+        self,
+        ptr_records: List[DNSEntry]
+    ):
+        
+        srv_records: List[List[DNSEntry]] = await asyncio.gather(*[
+            self.query(
+                DNSEntry(
+                    instance_name=entry.instance_name,
+                    service_name=entry.service_name,
+                    domain_protocol=entry.domain_protocol,
+                    domain_name=entry.domain_name,
+                    record_types=["SRV"]
+                )
+            ) for entry in ptr_records
+        ], return_exceptions=True)
+
+        service_records: List[DNSEntry] = []
+
+        for results in srv_records:
+            service_records.extend(results)
+
+        return service_records
+    
+    async def get_txt_records(
+        self,
+        ptr_records: List[DNSEntry]
+    ):
+        txt_records = await asyncio.gather(*[
+            self.query(
+                DNSEntry(
+                    instance_name=entry.instance_name,
+                    service_name=entry.service_name,
+                    domain_protocol=entry.domain_protocol,
+                    domain_name=entry.domain_name,
+                    record_types=["TXT"]
+                )
+            ) for entry in ptr_records
+        ], return_exceptions=True)
+
+        text_records: List[DNSEntry] = []
+        for results in txt_records:
+            text_records.extend(results)
+
+        return text_records

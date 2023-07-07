@@ -6,7 +6,7 @@ from mercury_sync.discovery.dns.core.url import (
 
 )
 from mercury_sync.discovery.dns.core.cache import CacheNode
-from mercury_sync.models.dns_query import DNSQuery
+from mercury_sync.models.dns_entry import DNSEntry
 from mercury_sync.models.dns_message import (
     DNSMessage,
     QueryType
@@ -40,8 +40,7 @@ class CacheResolver:
         self.request_timeout = request_timeout
         self.query_timeout = query_timeout
 
-    def cache_message(self, entry: DNSQuery):
-
+    def cache_message(self, entry: DNSEntry):
 
         for _, record in entry.to_record_data():
             if entry.time_to_live > 0 and record.rtype != RecordType.SOA:
