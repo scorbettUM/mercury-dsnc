@@ -172,7 +172,7 @@ class DNSClient:
             return DNSMessage.parse(response)
         
         elif self._client.connection_type == ConnectionType.HTTP:
-            response: HTTPMessage = await self._client.send(
+            response: HTTPMessage = await self._client.send_request(
                 event_name,
                 data.to_http_bytes(url.url),
                 url.address

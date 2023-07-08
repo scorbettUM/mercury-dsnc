@@ -1,6 +1,7 @@
+import json
 from enum import Enum
 from pydantic import AnyHttpUrl
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Union
 from urllib.parse import urlparse
 from .http_message import HTTPMessage
 from .message import Message
@@ -16,7 +17,7 @@ class HTTPRequest(Message):
     method: HTTPRequestMethod
     params: Optional[Dict[str, str]]
     headers: Dict[str, str]={}
-    data: Optional[str]
+    data: Optional[Union[str, Message]]
 
     class Config:
         arbitrary_types_allowed=True
@@ -25,6 +26,8 @@ class HTTPRequest(Message):
         parsed = urlparse(self.url)
 
         path = parsed.path
+        if path is None:
+            path = "/"
 
 
         if self.params:
@@ -48,7 +51,14 @@ class HTTPRequest(Message):
         ])
 
         encoded_data = None
-        if self.data:
+        if isinstance(self.data, Message):
+            encoded_data = json.dumps(self.data.to_data()).encode()
+
+            request.append(
+                'content-type: application/msync'
+            )
+
+        elif self.data:
             encoded_data = self.data.encode()
             content_length = len(encoded_data)
             
@@ -101,6 +111,46 @@ class HTTPRequest(Message):
             protocol=request_type,
             status=int(status),
             status_message=message,
+            headers=headers,
+            data=data.decode()
+        )
+    
+    @classmethod
+    def parse_request(cls, data: bytes):
+        response = data.split(b'\r\n')
+        
+        response_line = response[0]
+
+        headers: Dict[bytes, bytes] = {}
+
+        header_lines = response[1:]
+        data_line_idx = 0
+
+        for header_line in header_lines:
+
+            if header_line == b'':
+                data_line_idx += 1
+                break
+            
+            key, value = header_line.decode().split(
+                ':', 
+                maxsplit=1
+            )
+            headers[key.lower()] = value.strip()
+
+            data_line_idx += 1
+
+        data = b''.join(response[data_line_idx + 1:]).strip()
+        
+        method, path, request_type = response_line.decode().split(' ')
+
+        if path is None or path == '':
+            path = "/"
+
+        return HTTPMessage(
+            method=method,
+            path=path,
+            protocol=request_type,
             headers=headers,
             data=data.decode()
         )

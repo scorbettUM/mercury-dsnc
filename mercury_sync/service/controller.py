@@ -12,6 +12,7 @@ from concurrent.futures import (
     ProcessPoolExecutor
 )
 from inspect import signature
+from mercury_sync.connection.tcp.mercury_sync_http_connection import MercurySyncHTTPConnection
 from mercury_sync.connection.tcp.mercury_sync_tcp_connection import MercurySyncTCPConnection
 from mercury_sync.connection.udp.mercury_sync_udp_connection import MercurySyncUDPConnection
 from mercury_sync.env import load_env, Env
@@ -170,17 +171,33 @@ class Controller(Generic[*P]):
             )
         ]
 
-        self._tcp_pool = [
-            MercurySyncTCPConnection(
-                self.host,
-                self.port + idx + 1,
-                instance_id,
-                env=env
-            ) for instance_id, idx in zip(
-                self.instance_ids,
-                range(0, port_pool_size, 2)
-            )
-        ]
+        if env.MERCURY_SYNC_USE_HTTP_SERVER:
+
+            self._tcp_pool = [
+                MercurySyncHTTPConnection(
+                    self.host,
+                    self.port + idx + 1,
+                    instance_id,
+                    env=env
+                ) for instance_id, idx in zip(
+                    self.instance_ids,
+                    range(0, port_pool_size, 2)
+                )
+            ]
+
+        else:
+
+            self._tcp_pool = [
+                MercurySyncTCPConnection(
+                    self.host,
+                    self.port + idx + 1,
+                    instance_id,
+                    env=env
+                ) for instance_id, idx in zip(
+                    self.instance_ids,
+                    range(0, port_pool_size, 2)
+                )
+            ]
 
         for service_type, factory in self._plugin_factory.items():
             self._plugins[service_type] = PluginGroup([
@@ -210,6 +227,8 @@ class Controller(Generic[*P]):
             Message
         ]] = {}
 
+        supported_http_handlers: Dict[str, Dict[str, str]] = defaultdict(dict)
+
 
         for _, method in methods:
             method_name = method.__name__
@@ -223,14 +242,40 @@ class Controller(Generic[*P]):
 
             if not_internal and not_reserved and is_server:
 
-                
                 for param_type in rpc_signature.parameters.values():
                     if param_type.annotation in Message.__subclasses__():
 
                         model = param_type.annotation
-                        controller_models[method_name] = model
 
-                controller_methods[method_name] = method
+                        if method.as_http:
+
+                            http_methods: List[str] = method.methods
+                            path: str = method.path
+
+                            for http_method in http_methods:
+                                method_name = f'{http_method}_{path}'
+                                controller_models[method_name] = model
+
+                        else:
+
+
+                            controller_models[method_name] = model
+
+                if method.as_http:
+
+                    event_http_methods: List[str] = method.methods
+                    path: str = method.path
+
+                    for http_method in event_http_methods:
+                        method_name = f'{http_method}_{path}'
+                        controller_methods[method_name] = method
+
+
+                        supported_http_handlers[path][http_method] = method_name
+
+
+                else:
+                    controller_methods[method_name] = method
 
             elif not_internal and not_reserved and is_client:
 
@@ -265,7 +310,7 @@ class Controller(Generic[*P]):
 
                 self._events.update(plugin._events)
 
-        for tcp_connection, udp_connection in zip(
+        for udp_connection, tcp_connection in zip(
             self._udp_pool,
             self._tcp_pool
         ):
@@ -274,6 +319,9 @@ class Controller(Generic[*P]):
 
                 udp_connection.parsers[method_name] = model
                 tcp_connection.parsers[method_name] = model
+
+                if isinstance(tcp_connection, MercurySyncHTTPConnection):
+                    tcp_connection._supported_handlers = supported_http_handlers
 
                 self._parsers[method_name] = model
 
