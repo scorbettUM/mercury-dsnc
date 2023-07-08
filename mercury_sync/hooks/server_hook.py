@@ -7,30 +7,12 @@ from typing import (
 )
 
 
-def server(
-    path: Optional[str]="/",
-    methods: List[
-        Literal[
-            "GET",
-            "HEAD",
-            "OPTIONS",
-            "POST",
-            "PUT",
-            "PATCH",
-            "DELETE"
-        ]
-    ]=["GET"],
-    response_headers: Optional[Dict[str, str]]=None,
-    as_http=False
-):
+def server():
 
     def wraps(func):
 
         func.server_only = True
-        func.path = path
-        func.methods = methods
-        func.as_http =as_http
-        func.response_headers = response_headers
+        func.as_http = False
 
         @functools.wraps(func)
         def decorator(

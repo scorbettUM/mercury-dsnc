@@ -35,6 +35,7 @@ class Registrar(Controller):
         port: int,
         cert_path: Optional[str]=None,
         key_path: Optional[str]=None,
+        workers: int=0,
         env: Env=None
     ) -> None:
 
@@ -47,6 +48,7 @@ class Registrar(Controller):
             cert_path=cert_path,
             key_path=key_path,
             env=env,
+            workers=workers,
             engine='async'
         )
 

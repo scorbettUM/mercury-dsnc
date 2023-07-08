@@ -102,6 +102,8 @@ def start_pool(
 
 class Controller(Generic[*P]):
 
+    services: Dict[str, Type[Controller]] = {}
+
     def __init__(
         self,
         host: str,
@@ -489,6 +491,36 @@ class Controller(Generic[*P]):
         
         await self._copy_to_plugins()
 
+
+        services_count = len(self.services)
+
+        starting_port = self.port + (self._workers * 2)
+        max_port = starting_port + ((self._workers * 2) * services_count)
+
+        ports_range = list(range(
+            starting_port,
+            max_port,
+            self._workers * 2
+        ))
+
+        for service_type, port in zip(
+            self.services.values(),
+            ports_range
+        ):
+            
+            service = service_type(
+                self.host,
+                port,
+                cert_path=cert_path,
+                key_path=key_path,
+                workers=self._workers,
+                env=self._env
+            )
+
+            await service.start_server(
+                cert_path=cert_path,
+                key_path=key_path
+            )
 
     async def start_client(
         self,
