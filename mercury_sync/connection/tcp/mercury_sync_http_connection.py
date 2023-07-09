@@ -11,8 +11,17 @@ from mercury_sync.connection.base.connection_type import ConnectionType
 from mercury_sync.models.http_message import HTTPMessage
 from mercury_sync.models.http_request import HTTPRequest
 from mercury_sync.models.request import Request
-from mercury_sync.models.message import Message
-from typing import Tuple, Union, Optional, Deque, Dict, List, Any
+from pydantic import BaseModel
+from typing import (
+    Tuple, 
+    Union, 
+    Optional, 
+    Deque, 
+    Dict, 
+    List, 
+    Any, 
+    Callable
+)
 from .mercury_sync_tcp_connection import MercurySyncTCPConnection
 from .protocols import MercurySyncTCPClientProtocol
 
@@ -44,6 +53,13 @@ class MercurySyncHTTPConnection(MercurySyncTCPConnection):
         self._use_encryption = env.MERCURY_SYNC_USE_HTTP_MSYNC_ENCRYPTION
 
         self._supported_handlers: Dict[str, Dict[str, str]] = defaultdict(dict)
+        self._response_parsers: Dict[
+            Tuple[str, int],
+            Callable[
+                [BaseModel],
+                str
+            ]
+        ] = {}
 
     async def connect_client(
         self,
@@ -275,16 +291,18 @@ class MercurySyncHTTPConnection(MercurySyncTCPConnection):
         if '?' in path:
             path, query = path.split('?')
 
-        request = Request(
-            path,
-            method,
-            query,
-            request_data
-        )
-
         try:
-            
-            handler = self.events[f'{method}_{path}']
+
+            handler_key = f'{method}_{path}'
+            handler = self.events[handler_key]
+
+            request = Request(
+                path,
+                method,
+                query,
+                request_data,
+                model=self.parsers.get(handler_key)
+            )
 
             response_info: Tuple[
                 Union[str, None],
@@ -296,28 +314,44 @@ class MercurySyncHTTPConnection(MercurySyncTCPConnection):
                 status_code
             ) = response_info
 
+            response_key = f'{handler_key}_{status_code}'
+
             head_line = f'HTTP/1.1 {status_code} OK'
             
             encoded_data: str = ''
-            if response_data:
-                data = response_data.encode()
-                encoded_data = f'{data}\r\n'
 
-                content_length = len(encoded_data)
-                headers = f'content-length: {content_length}\r\n'
+            response_parser = self._response_parsers.get(response_key)
+
+            if response_parser:
+
+                parsed_response = response_parser(response_data)
+
+                encoded_data = parsed_response
+
+                content_length = len(parsed_response)
+                headers = f'content-length: {content_length}'
+
+            elif response_data:
+                encoded_data = response_data
+
+                content_length = len(response_data)
+                headers = f'content-length: {content_length}'
 
             else:
-                headers = 'content-length: 0\r\n'
+                headers = 'content-length: 0'
 
-            if handler.response_headers:
-                for key in handler.response_headers:
-                    headers = f'{headers}{key}: {request.headers[key]}\r\n'
+            response_headers = handler.response_headers
+            if response_headers:
+                for key in response_headers:
+                    headers = f'{headers}\r\n{key}: {response_headers[key]}'
 
-            transport.write(
-                f'{head_line}\r\n{headers}\r\n{encoded_data}'.encode()
-            )
+            response_bytes = f'{head_line}\r\n{headers}\r\n\r\n{encoded_data}'.encode()
 
-            transport.close()
+            if self._use_encryption:
+                encrypted_data = self._encryptor.encrypt(response_bytes)
+                response_bytes = self._compressor.compress(encrypted_data)
+
+            transport.write(response_bytes)
 
         except KeyError:
             
@@ -348,6 +382,7 @@ class MercurySyncHTTPConnection(MercurySyncTCPConnection):
                 transport.close()
 
         except Exception:
+
             server_error_respnse = HTTPMessage(
                 path=request.path,
                 status=500,

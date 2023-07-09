@@ -23,7 +23,8 @@ class Request(Generic[T]):
         path: str,
         method: str,
         query: str,
-        raw: List[bytes]
+        raw: List[bytes],
+        model: Optional[BaseModel] = None
     ) -> None:
         
         self.path = path
@@ -36,6 +37,7 @@ class Request(Generic[T]):
 
         self._raw = raw
         self._data_line_idx = -1
+        self._model = model
 
 
     @property
@@ -65,7 +67,7 @@ class Request(Generic[T]):
         return self._headers
     
     @property
-    def params(self):
+    def params(self) -> Dict[str, str]:
         
         if len(self._params) < 1:
             params = self._query.split('&')
@@ -80,7 +82,7 @@ class Request(Generic[T]):
     @property
     def body(self):
         
-        headers = self._headers
+        headers = self.headers
 
         if self._data is None:
             self._data = b''.join(self._raw[self._data_line_idx:]).strip()
@@ -90,11 +92,11 @@ class Request(Generic[T]):
 
         return self._data
     
-    def data(self, model: Optional[T]=None):
+    def data(self) -> Union[bytes, str, Dict[str, str], T]:
         data = self.body
 
-        if isinstance(data, dict) and model:
-            return model(**data)
+        if isinstance(data, dict) and self._model:
+            return self._model(**data)
         
         return data
 

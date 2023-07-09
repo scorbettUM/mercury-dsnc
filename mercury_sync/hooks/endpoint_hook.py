@@ -1,9 +1,11 @@
 import functools
+from pydantic import BaseModel
 from typing import (
     Optional, 
     List, 
     Literal,
-    Dict
+    Dict,
+    Callable
 )
 
 
@@ -20,6 +22,21 @@ def endpoint(
             "DELETE"
         ]
     ]=["GET"],
+    responses: Optional[
+        Dict[
+            int,
+            BaseModel
+        ]
+    ]=None,
+    serializers: Optional[
+        Dict[
+            int,
+            Callable[
+                ...,
+                str
+            ]
+        ]
+    ]=None,
     response_headers: Optional[Dict[str, str]]=None
 ):
 
@@ -30,6 +47,8 @@ def endpoint(
         func.methods = methods
         func.as_http = True
         func.response_headers = response_headers
+        func.responses = responses
+        func.serializers = serializers
 
         @functools.wraps(func)
         def decorator(

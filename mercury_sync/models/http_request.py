@@ -52,14 +52,14 @@ class HTTPRequest(Message):
 
         encoded_data = None
         if isinstance(self.data, Message):
-            encoded_data = json.dumps(self.data.to_data()).encode()
+            encoded_data = json.dumps(self.data.to_data())
 
             request.append(
                 'content-type: application/msync'
             )
 
         elif self.data:
-            encoded_data = self.data.encode()
+            encoded_data = self.data
             content_length = len(encoded_data)
             
             request.append(
@@ -70,7 +70,6 @@ class HTTPRequest(Message):
 
         if encoded_data:
             request.append(encoded_data)
-
 
         encoded_request = '\r\n'.join(request)
 

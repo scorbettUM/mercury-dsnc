@@ -1,5 +1,5 @@
 from mercury_sync.models.message import Message
-from typing import TypeVar, Tuple, Generic, TypeVarTuple
+from typing import TypeVar, Tuple
 
 
 T = TypeVar('T', bound=Message)
