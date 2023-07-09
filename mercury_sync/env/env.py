@@ -9,7 +9,8 @@ from pydantic import (
 from typing import (
     Dict, 
     Union,
-    Callable
+    Callable,
+    Literal
 )
 
 
@@ -17,6 +18,8 @@ PrimaryType = Union[str, int, float, bytes, bool]
 
 
 class Env(BaseModel):
+    MERCURY_SYNC_HTTP_RATE_LIMIT_STRATEGY: Literal["none", "global", "endpoint", "ip-address"]="none"
+    MERCURY_SYNC_HTTP_RATE_LIMIT_PERIOD: StrictStr='1s'
     MERCURY_SYNC_HTTP_POOL_SIZE: StrictInt=10
     MERCURY_SYNC_USE_HTTP_MSYNC_ENCRYPTION: StrictBool=False
     MERCURY_SYNC_USE_HTTP_SERVER: StrictBool=False
@@ -30,6 +33,8 @@ class Env(BaseModel):
     @classmethod
     def types_map(self) -> Dict[str, Callable[[str], PrimaryType]]:
         return {
+            'MERCURY_SYNC_HTTP_RATE_LIMIT_STRATEGY': str,
+            'MERCURY_SYNC_HTTP_RATE_LIMIT_PERIOD': str,
             'MERCURY_SYNC_USE_TCP_SERVER': lambda value: True if value.lower() == 'true' else False,
             'MERCURY_SYNC_HTTP_POOL_SIZE': int,
             'MERCURY_SYNC_USE_HTTP_MSYNC_ENCRYPTION': lambda value: True if value.lower() == 'true' else False,

@@ -1,16 +1,16 @@
 from __future__ import annotations
 import asyncio
-import json
 import socket
 import ssl
 import zstandard
-import traceback
 from collections import deque, defaultdict
 from mercury_sync.env import Env
+from mercury_sync.env.time_parser import TimeParser
 from mercury_sync.connection.base.connection_type import ConnectionType
 from mercury_sync.models.http_message import HTTPMessage
 from mercury_sync.models.http_request import HTTPRequest
 from mercury_sync.models.request import Request
+from mercury_sync.rate_limiting import LeakyBucketLimiter
 from pydantic import BaseModel
 from typing import (
     Tuple, 
@@ -19,7 +19,6 @@ from typing import (
     Deque, 
     Dict, 
     List, 
-    Any, 
     Callable
 )
 from .mercury_sync_tcp_connection import MercurySyncTCPConnection
@@ -60,6 +59,14 @@ class MercurySyncHTTPConnection(MercurySyncTCPConnection):
                 str
             ]
         ] = {}
+
+        self._limiter: Union[LeakyBucketLimiter, None] = None
+        self._rate_limiting_enabled = env.MERCURY_SYNC_HTTP_RATE_LIMIT_STRATEGY != "none"
+        self._rate_limit_period = TimeParser(
+            env.MERCURY_SYNC_HTTP_RATE_LIMIT_PERIOD
+        ).time
+
+        self._rate_limiters: Dict[str, LeakyBucketLimiter] = {}
 
     async def connect_client(
         self,
@@ -167,7 +174,6 @@ class MercurySyncHTTPConnection(MercurySyncTCPConnection):
         address: Tuple[str, int]
     ):
         async with self._semaphore:
-
 
             connections = self._connections.get(address)
             if connections is None:
@@ -280,6 +286,7 @@ class MercurySyncHTTPConnection(MercurySyncTCPConnection):
         transport: asyncio.Transport
     ):
         
+
         if self._use_encryption:
             decompressed_data = self._decompressor.decompress(data)
             data = self._encryptor.decrypt(decompressed_data)
@@ -287,13 +294,17 @@ class MercurySyncHTTPConnection(MercurySyncTCPConnection):
         request_data = data.split(b'\r\n')
         method, path, request_type = request_data[0].decode().split(' ')
 
-        query: Union[str, None] = None
-        if '?' in path:
-            path, query = path.split('?')
+        handler_key = f'{method}_{path}'
 
         try:
+            rate_limiter = self._rate_limiters.get(handler_key)
+            if rate_limiter:
+                await rate_limiter.acquire()
 
-            handler_key = f'{method}_{path}'
+            query: Union[str, None] = None
+            if '?' in path:
+                path, query = path.split('?')
+
             handler = self.events[handler_key]
 
             request = Request(
@@ -366,7 +377,6 @@ class MercurySyncHTTPConnection(MercurySyncTCPConnection):
                 )
 
                 transport.write(not_found_response.prepare_response())
-                transport.close()
 
             elif self._supported_handlers[request.path].get(request.method) is None:
 
@@ -379,19 +389,17 @@ class MercurySyncHTTPConnection(MercurySyncTCPConnection):
                 )
 
                 transport.write(method_not_allowed_response.prepare_response())
-                transport.close()
 
         except Exception:
 
-            server_error_respnse = HTTPMessage(
-                path=request.path,
-                status=500,
-                error='Internal Error',
-                protocol=request_type,
-                method=request.method
-            )
+            if transport.is_closing() is False:
 
-            transport.write(server_error_respnse.prepare_response())
-            transport.close()
+                server_error_respnse = HTTPMessage(
+                    path=request.path,
+                    status=500,
+                    error='Internal Error',
+                    protocol=request_type,
+                    method=request.method
+                )
 
-
+                transport.write(server_error_respnse.prepare_response())

@@ -16,8 +16,10 @@ from mercury_sync.connection.tcp.mercury_sync_http_connection import MercurySync
 from mercury_sync.connection.tcp.mercury_sync_tcp_connection import MercurySyncTCPConnection
 from mercury_sync.connection.udp.mercury_sync_udp_connection import MercurySyncUDPConnection
 from mercury_sync.env import load_env, Env
+from mercury_sync.env.time_parser import TimeParser
 from mercury_sync.models.error import Error
 from mercury_sync.models.message import Message
+from mercury_sync.rate_limiting import LeakyBucketLimiter
 from pydantic import BaseModel
 from typing import (
     Optional, 
@@ -239,7 +241,10 @@ class Controller(Generic[*P]):
         ]] = {}
 
         supported_http_handlers: Dict[str, Dict[str, str]] = defaultdict(dict)
+        rate_limiters: Dict[str, LeakyBucketLimiter] = {}
 
+        rate_limit_strategy = env.MERCURY_SYNC_HTTP_RATE_LIMIT_STRATEGY
+        rate_limiting_enabled = rate_limit_strategy != "none"
 
         for _, method in methods:
             method_name = method.__name__
@@ -262,15 +267,14 @@ class Controller(Generic[*P]):
 
                 if is_http:
 
-                    event_http_methods: List[str] = method.methods
+                    event_http_method: str = method.method
                     path: str = method.path
 
-                    for http_method in event_http_methods:
-                        event_key = f'{http_method}_{path}'
-                        controller_methods[event_key] = method
+                    event_key = f'{event_http_method}_{path}'
+                    controller_methods[event_key] = method
 
 
-                        supported_http_handlers[path][http_method] = method_name
+                    supported_http_handlers[path][event_http_method] = method_name
 
 
                 else:
@@ -305,53 +309,69 @@ class Controller(Generic[*P]):
                     int
                 ] = args[0]
 
-                default_status = args[1]
-
-                event_http_methods: List[str] = method.methods
+                event_http_method: List[str] = method.method
                 path: str = method.path
 
+                
                 for param_type in rpc_signature.parameters.values():
                     args = get_args(param_type.annotation)
                     
                     if len(args) > 0 and args[0] in BaseModel.__subclasses__():
 
-                        http_methods: List[str] = method.methods
                         path: str = method.path
 
-                        for http_method in http_methods:
-                            event_key = f'{http_method}_{path}'
+                        event_key = f'{event_http_method}_{path}'
 
-                            model = args[0]
+                        model = args[0]
 
-                            controller_models[event_key] = model
+                        controller_models[event_key] = model
 
-                for http_method in event_http_methods:
-                    event_key = f'{http_method}_{path}_{default_status}'
-                    controller_methods[event_key] = method
+                controller_methods[event_key] = method
 
-                    if isinstance(method.responses, dict):
+                if isinstance(method.responses, dict):
 
-                        responses = method.responses
+                    responses = method.responses
 
-                        for status, status_response_model in responses.items():
-                            event_key = f'{http_method}_{path}_{status}'
+                    for status, status_response_model in responses.items():
+                        status_key = f'{event_http_method}_{path}_{status}'
 
-                            if issubclass(status_response_model, BaseModel):
-                                response_parsers[event_key] = lambda response: status_response_model(
-                                    **response
-                                ).json()
+                        if issubclass(status_response_model, BaseModel):
+                            response_parsers[status_key] = lambda response: status_response_model(
+                                **response
+                            ).json()
 
-                    if isinstance(method.serializers, dict):
+                if isinstance(method.serializers, dict):
 
-                        serializers = method.serializers
+                    serializers = method.serializers
 
-                        for status, serializer in serializers.items():
-                            event_key = f'{http_method}_{path}_{status}'
+                    for status, serializer in serializers.items():
+                        status_key = f'{event_http_method}_{path}_{status}'
 
-                            response_parsers[event_key] = serializer
+                        response_parsers[status_key] = serializer
 
+                if rate_limiting_enabled:
 
+                    if rate_limit_strategy == "endpoint" and isinstance(method.rate_limit, tuple):
                     
+                        max_requests, period = method.rate_limit
+                        time_period_secods = TimeParser(period).time
+
+                        rate_limiters[event_key] = LeakyBucketLimiter(
+                            max_requests,
+                            time_period_secods
+                        )
+
+                    elif rate_limit_strategy == "global":
+                        max_requests = env.MERCURY_SYNC_HTTP_POOL_SIZE
+                        rate_limit_period = env.MERCURY_SYNC_HTTP_RATE_LIMIT_PERIOD
+
+                        time_period_secods = TimeParser(rate_limit_period).time
+
+                        rate_limiters[event_key] = LeakyBucketLimiter(
+                            max_requests,
+                            time_period_secods
+                        )
+                        
 
         self._parsers: Dict[str, Message] = {}
         self._events: Dict[str, Message] = {}
@@ -390,6 +410,11 @@ class Controller(Generic[*P]):
 
             for key, parser in response_parsers.items():
                 tcp_connection._response_parsers[key] = parser
+            
+            for key, limiter in rate_limiters.items():
+
+                if isinstance(tcp_connection, MercurySyncHTTPConnection):
+                    tcp_connection._rate_limiters[key] = limiter
     
     def __getitem__(self, name: str):
         return self._plugins.get(name)

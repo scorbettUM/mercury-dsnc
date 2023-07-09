@@ -5,23 +5,22 @@ from typing import (
     List, 
     Literal,
     Dict,
-    Callable
+    Callable,
+    Tuple
 )
 
 
 def endpoint(
     path: Optional[str]="/",
-    methods: List[
-        Literal[
-            "GET",
-            "HEAD",
-            "OPTIONS",
-            "POST",
-            "PUT",
-            "PATCH",
-            "DELETE"
-        ]
-    ]=["GET"],
+    method: Literal[
+        "GET",
+        "HEAD",
+        "OPTIONS",
+        "POST",
+        "PUT",
+        "PATCH",
+        "DELETE"
+    ]="GET",
     responses: Optional[
         Dict[
             int,
@@ -37,18 +36,25 @@ def endpoint(
             ]
         ]
     ]=None,
-    response_headers: Optional[Dict[str, str]]=None
+    response_headers: Optional[Dict[str, str]]=None,
+    rate_limit: Optional[
+        Tuple[
+            int, 
+            str
+        ]
+    ]=None
 ):
 
     def wraps(func):
 
         func.server_only = True
         func.path = path
-        func.methods = methods
+        func.method = method
         func.as_http = True
         func.response_headers = response_headers
         func.responses = responses
         func.serializers = serializers
+        func.rate_limit = rate_limit
 
         @functools.wraps(func)
         def decorator(
