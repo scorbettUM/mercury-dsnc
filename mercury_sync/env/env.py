@@ -18,7 +18,18 @@ PrimaryType = Union[str, int, float, bytes, bool]
 
 
 class Env(BaseModel):
-    MERCURY_SYNC_HTTP_RATE_LIMIT_STRATEGY: Literal["none", "global", "endpoint", "ip-address"]="none"
+    MERCURY_SYNC_HTTP_RATE_LIMIT_STRATEGY: Literal[
+        "none", 
+        "global", 
+        "endpoint", 
+        "ip",
+        "ip-endpoint"
+    ]="none"
+    MERCURY_SYNC_HTTP_RATE_LIMITER_TYPE: Literal[
+        "token-bucket",
+        "leaky-bucket",
+        "sliding-window"
+    ]="sliding-window"
     MERCURY_SYNC_HTTP_RATE_LIMIT_PERIOD: StrictStr='1s'
     MERCURY_SYNC_HTTP_POOL_SIZE: StrictInt=10
     MERCURY_SYNC_USE_HTTP_MSYNC_ENCRYPTION: StrictBool=False

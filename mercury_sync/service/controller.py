@@ -19,7 +19,7 @@ from mercury_sync.env import load_env, Env
 from mercury_sync.env.time_parser import TimeParser
 from mercury_sync.models.error import Error
 from mercury_sync.models.message import Message
-from mercury_sync.rate_limiting import LeakyBucketLimiter
+from mercury_sync.rate_limiting import TokenBucketLimiter
 from pydantic import BaseModel
 from typing import (
     Optional, 
@@ -241,7 +241,7 @@ class Controller(Generic[*P]):
         ]] = {}
 
         supported_http_handlers: Dict[str, Dict[str, str]] = defaultdict(dict)
-        rate_limiters: Dict[str, LeakyBucketLimiter] = {}
+        rate_limiters: Dict[str, TokenBucketLimiter] = {}
 
         rate_limit_strategy = env.MERCURY_SYNC_HTTP_RATE_LIMIT_STRATEGY
         rate_limiting_enabled = rate_limit_strategy != "none"
@@ -349,30 +349,6 @@ class Controller(Generic[*P]):
 
                         response_parsers[status_key] = serializer
 
-                if rate_limiting_enabled:
-
-                    if rate_limit_strategy == "endpoint" and isinstance(method.rate_limit, tuple):
-                    
-                        max_requests, period = method.rate_limit
-                        time_period_secods = TimeParser(period).time
-
-                        rate_limiters[event_key] = LeakyBucketLimiter(
-                            max_requests,
-                            time_period_secods
-                        )
-
-                    elif rate_limit_strategy == "global":
-                        max_requests = env.MERCURY_SYNC_HTTP_POOL_SIZE
-                        rate_limit_period = env.MERCURY_SYNC_HTTP_RATE_LIMIT_PERIOD
-
-                        time_period_secods = TimeParser(rate_limit_period).time
-
-                        rate_limiters[event_key] = LeakyBucketLimiter(
-                            max_requests,
-                            time_period_secods
-                        )
-                        
-
         self._parsers: Dict[str, Message] = {}
         self._events: Dict[str, Message] = {}
 
@@ -410,11 +386,6 @@ class Controller(Generic[*P]):
 
             for key, parser in response_parsers.items():
                 tcp_connection._response_parsers[key] = parser
-            
-            for key, limiter in rate_limiters.items():
-
-                if isinstance(tcp_connection, MercurySyncHTTPConnection):
-                    tcp_connection._rate_limiters[key] = limiter
     
     def __getitem__(self, name: str):
         return self._plugins.get(name)
