@@ -19,7 +19,6 @@ from mercury_sync.env import load_env, Env
 from mercury_sync.env.time_parser import TimeParser
 from mercury_sync.models.error import Error
 from mercury_sync.models.message import Message
-from mercury_sync.rate_limiting import TokenBucketLimiter
 from pydantic import BaseModel
 from typing import (
     Optional, 
@@ -241,10 +240,6 @@ class Controller(Generic[*P]):
         ]] = {}
 
         supported_http_handlers: Dict[str, Dict[str, str]] = defaultdict(dict)
-        rate_limiters: Dict[str, TokenBucketLimiter] = {}
-
-        rate_limit_strategy = env.MERCURY_SYNC_HTTP_RATE_LIMIT_STRATEGY
-        rate_limiting_enabled = rate_limit_strategy != "none"
 
         for _, method in methods:
             method_name = method.__name__

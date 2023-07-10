@@ -1,7 +1,9 @@
 from __future__ import annotations
 import asyncio
+import ipaddress
 import socket
 import ssl
+import traceback
 import zstandard
 from collections import deque, defaultdict
 from mercury_sync.env import Env
@@ -10,11 +12,7 @@ from mercury_sync.connection.base.connection_type import ConnectionType
 from mercury_sync.models.http_message import HTTPMessage
 from mercury_sync.models.http_request import HTTPRequest
 from mercury_sync.models.request import Request
-from mercury_sync.rate_limiting import (
-    LeakyBucketLimiter,
-    SlidingWindowLimiter,
-    TokenBucketLimiter
-)
+from mercury_sync.rate_limiting import Limiter
 from pydantic import BaseModel
 from typing import (
     Tuple, 
@@ -49,7 +47,7 @@ class MercurySyncHTTPConnection(MercurySyncTCPConnection):
         self._connections: Dict[str, List[asyncio.Transport]] = defaultdict(list)
         self._http_socket: Union[socket.socket, None] = None
         self._hostnames: Dict[Tuple[str, int], str] = {}
-        self._max_concurrency = env.MERCURY_SYNC_HTTP_POOL_SIZE
+        self._max_concurrency = env.MERCURY_SYNC_MAX_CONCURRENCY
 
         self.connection_type = ConnectionType.HTTP
         self._is_server = env.MERCURY_SYNC_USE_HTTP_SERVER
@@ -64,47 +62,10 @@ class MercurySyncHTTPConnection(MercurySyncTCPConnection):
             ]
         ] = {}
 
-        self._limiter: Union[TokenBucketLimiter, None] = None
-        
-        self._rate_limit_strategy = env.MERCURY_SYNC_HTTP_RATE_LIMIT_STRATEGY
-        self._rate_limiter_type = env.MERCURY_SYNC_HTTP_RATE_LIMITER_TYPE
+        self._limiter = Limiter(env)
 
-        self._rate_limiter_types: Dict[
-            str,
-            Callable[
-                [int, str],
-                Union[
-                    LeakyBucketLimiter,
-                    SlidingWindowLimiter,
-                    TokenBucketLimiter
-                ]
-            ]
-        ] = {
-            "leaky-bucket": lambda max_concurrency, rate_limit_period: LeakyBucketLimiter(
-                max_concurrency,
-                rate_limit_period
-            ),
-            "sliding-window":  lambda max_concurrency, rate_limit_period: SlidingWindowLimiter(
-                max_concurrency,
-                rate_limit_period
-            ),
-            "token-bucket":  lambda max_concurrency, rate_limit_period: TokenBucketLimiter(
-                max_concurrency,
-                rate_limit_period
-            ),
-        }
-
-        self._rate_limiting_enabled = self._rate_limit_strategy != "none"
-        self._rate_limit_period = env.MERCURY_SYNC_HTTP_RATE_LIMIT_PERIOD
-
-        self._rate_limiters: Dict[
-            str, 
-            Union[
-                LeakyBucketLimiter,
-                SlidingWindowLimiter,
-                TokenBucketLimiter
-            ]
-        ] = {}
+        rate_limit_strategy = env.MERCURY_SYNC_HTTP_RATE_LIMIT_STRATEGY
+        self._rate_limiting_enabled = rate_limit_strategy != "none"
 
     async def connect_client(
         self,
@@ -318,27 +279,6 @@ class MercurySyncHTTPConnection(MercurySyncTCPConnection):
                 HTTPRequest.parse(data)
             )
 
-    async def _check_limiter(
-        self,
-        limiter_key: str,
-        rate_limit_config: Tuple[int, str]
-    ):
-        limiter = self._rate_limiters.get(limiter_key)
-
-        if limiter is None:
-
-            max_concurrency, period = rate_limit_config
-            period = TimeParser(period).time
-
-            limiter = self._rate_limiter_types.get(
-                self._rate_limiter_type
-            )(max_concurrency, period)
-
-            self._rate_limiters[limiter_key] = limiter
-            
-
-        await limiter.acquire()
-
     async def _route_request(
         self, 
         data: bytes,
@@ -359,45 +299,6 @@ class MercurySyncHTTPConnection(MercurySyncTCPConnection):
 
             handler = self.events[handler_key]
 
-            if self._rate_limiting_enabled:
-                rate_limit_config: Tuple[int, str] = handler.rate_limit
-                ip_address, _ = transport.get_extra_info('peername')
-
-                if self._rate_limit_strategy == 'ip':
-                    
-                    await self._check_limiter(
-                        ip_address,
-                        (
-                            self._max_concurrency,
-                            self._rate_limit_period
-                        )
-                    )
-
-                elif self._rate_limit_strategy == 'endpoint' and rate_limit_config:
-
-                    await self._check_limiter(
-                        handler_key,
-                        rate_limit_config
-                    )
-                
-                elif self._rate_limit_strategy == 'global':
-                    await self._check_limiter(
-                        handler_key,
-                        (
-                            self._max_concurrency,
-                            self._rate_limit_period
-                        )
-                    )
-
-                elif self._rate_limit_strategy == "ip-endpoint" and rate_limit_config:
-
-                    limiter_key = f'{ip_address}_{handler_key}'
-
-                    await self._check_limiter(
-                        limiter_key,
-                        rate_limit_config
-                    )                
-
             query: Union[str, None] = None
             if '?' in path:
                 path, query = path.split('?')
@@ -410,6 +311,16 @@ class MercurySyncHTTPConnection(MercurySyncTCPConnection):
                 request_data,
                 model=self.parsers.get(handler_key)
             )
+
+            if self._rate_limiting_enabled:
+
+                ip_address, _ = transport.get_extra_info('peername')
+
+                await self._limiter.limit(
+                    ipaddress.ip_address(ip_address),
+                    request,
+                    limit=handler.limit
+                )
 
             response_info: Tuple[
                 Union[str, None],
@@ -487,6 +398,7 @@ class MercurySyncHTTPConnection(MercurySyncTCPConnection):
                 transport.write(method_not_allowed_response.prepare_response())
 
         except Exception:
+            print(traceback.format_exc())
 
             if transport.is_closing() is False:
 

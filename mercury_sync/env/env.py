@@ -23,7 +23,8 @@ class Env(BaseModel):
         "global", 
         "endpoint", 
         "ip",
-        "ip-endpoint"
+        "ip-endpoint",
+        "custom"
     ]="none"
     MERCURY_SYNC_HTTP_RATE_LIMITER_TYPE: Literal[
         "token-bucket",
@@ -31,7 +32,7 @@ class Env(BaseModel):
         "sliding-window"
     ]="sliding-window"
     MERCURY_SYNC_HTTP_RATE_LIMIT_PERIOD: StrictStr='1s'
-    MERCURY_SYNC_HTTP_POOL_SIZE: StrictInt=10
+    MERCURY_SYNC_HTTP_RATE_LIMIT_REQUESTS: StrictInt=100
     MERCURY_SYNC_USE_HTTP_MSYNC_ENCRYPTION: StrictBool=False
     MERCURY_SYNC_USE_HTTP_SERVER: StrictBool=False
     MERCURY_SYNC_USE_HTTP_AND_TCP_SERVERS: StrictBool=False
@@ -47,7 +48,7 @@ class Env(BaseModel):
             'MERCURY_SYNC_HTTP_RATE_LIMIT_STRATEGY': str,
             'MERCURY_SYNC_HTTP_RATE_LIMIT_PERIOD': str,
             'MERCURY_SYNC_USE_TCP_SERVER': lambda value: True if value.lower() == 'true' else False,
-            'MERCURY_SYNC_HTTP_POOL_SIZE': int,
+            'MERCURY_SYNC_HTTP_RATE_LIMIT_REQUESTS': int,
             'MERCURY_SYNC_USE_HTTP_MSYNC_ENCRYPTION': lambda value: True if value.lower() == 'true' else False,
             'MERCURY_SYNC_USE_HTTP_SERVER': lambda value: True if value.lower() == 'true' else False,
             'MERCURY_SYNC_TCP_CONNECT_RETRIES': int,

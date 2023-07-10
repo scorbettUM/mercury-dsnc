@@ -14,7 +14,11 @@ class LeakyBucketLimiter(BaseLimiter):
         "_last_check"
     )
 
-    def __init__(self, max_rate: float, time_period: float = 60) -> None:
+    def __init__(
+        self, 
+        max_rate: float, 
+        time_period: float = 60
+    ) -> None:
         super().__init__(
             max_rate,
             time_period

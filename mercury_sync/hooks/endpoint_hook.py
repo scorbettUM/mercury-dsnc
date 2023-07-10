@@ -1,4 +1,5 @@
 import functools
+from mercury_sync.models.limit import Limit
 from pydantic import BaseModel
 from typing import (
     Optional, 
@@ -37,12 +38,7 @@ def endpoint(
         ]
     ]=None,
     response_headers: Optional[Dict[str, str]]=None,
-    rate_limit: Optional[
-        Tuple[
-            int, 
-            str
-        ]
-    ]=None
+    limit: Optional[Limit]=None
 ):
 
     def wraps(func):
@@ -54,7 +50,7 @@ def endpoint(
         func.response_headers = response_headers
         func.responses = responses
         func.serializers = serializers
-        func.rate_limit = rate_limit
+        func.limit = limit
 
         @functools.wraps(func)
         def decorator(
