@@ -3,7 +3,6 @@ import asyncio
 import ipaddress
 import socket
 import ssl
-import traceback
 import zstandard
 from collections import deque, defaultdict
 from mercury_sync.env import Env
@@ -398,7 +397,6 @@ class MercurySyncHTTPConnection(MercurySyncTCPConnection):
                 transport.write(method_not_allowed_response.prepare_response())
 
         except Exception:
-            print(traceback.format_exc())
 
             if transport.is_closing() is False:
 
