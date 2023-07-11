@@ -1,4 +1,5 @@
 import math
+from mercury_sync.models.limit import Limit
 from .base_limiter import BaseLimiter
 
 
@@ -15,15 +16,19 @@ class SlidingWindowLimiter(BaseLimiter):
         "_previous_count"
     )
 
-    def __init__(self, max_rate: float, time_period: float = 60) -> None:
+    def __init__(
+        self, 
+        limit: Limit
+    ) -> None:
 
         super().__init__(
-            max_rate,
-            time_period
+            limit.max_requests,
+            limit.period(),
+            reject_requests=limit.reject_requests
         )
 
         self._current_time = self._loop.time()
-        self._previous_count = max_rate
+        self._previous_count = limit.max_requests
 
     def has_capacity(self, amount: float = 1) -> bool:
 

@@ -3,7 +3,9 @@ from pydantic import (
     BaseModel,
     IPvAnyAddress,
     StrictStr,
-    StrictInt
+    StrictInt,
+    StrictBool,
+    StrictFloat
 )
 from typing import (
     Optional, 
@@ -28,8 +30,11 @@ HTTPMethod = Literal[
 
 
 class Limit(BaseModel):
-    request_limit: StrictInt
+    max_requests: StrictInt
+    min_requests: Optional[StrictInt]
     request_period: StrictStr='1s'
+    reject_requests: StrictBool=True
+    cpu_limit: Optional[Union[StrictFloat, StrictInt]]
     limiter_type: Optional[
         Literal[
             "token-bucket",

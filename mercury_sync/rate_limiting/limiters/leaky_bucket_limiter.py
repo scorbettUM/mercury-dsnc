@@ -1,4 +1,5 @@
 import asyncio
+from mercury_sync.models.limit import Limit
 from .base_limiter import BaseLimiter
 
 
@@ -15,13 +16,13 @@ class LeakyBucketLimiter(BaseLimiter):
     )
 
     def __init__(
-        self, 
-        max_rate: float, 
-        time_period: float = 60
-    ) -> None:
+        self,
+        limit: Limit
+     ) -> None:
         super().__init__(
-            max_rate,
-            time_period
+            limit.max_requests,
+            limit.period(),
+            reject_requests=limit.reject_requests
         )
 
         self._level = 0.0
@@ -29,14 +30,12 @@ class LeakyBucketLimiter(BaseLimiter):
 
     def _leak(self) -> None:
 
-        loop = asyncio.get_running_loop()
-
         if self._level:
-            elapsed = loop.time() - self._last_check
+            elapsed = self._loop.time() - self._last_check
             decrement = elapsed * self._rate_per_sec
             self._level = max(self._level - decrement, 0)            
 
-        self._last_check = loop.time()
+        self._last_check = self._loop.time()
 
     def has_capacity(self, amount: float = 1) -> bool:
 
@@ -50,4 +49,4 @@ class LeakyBucketLimiter(BaseLimiter):
                     fut.set_result(True)
                     break
 
-        return self._level + amount <= self.max_rate
+        return requested <= self.max_rate

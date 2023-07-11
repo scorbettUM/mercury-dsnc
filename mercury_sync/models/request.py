@@ -1,3 +1,4 @@
+import asyncio
 import json
 from pydantic import (
     BaseModel,
@@ -9,7 +10,8 @@ from typing import (
     List, 
     TypeVar, 
     Generic,
-    Optional
+    Optional,
+    Type
 )
 
 
@@ -17,6 +19,7 @@ T = TypeVar('T', bound=BaseModel)
 
 
 class Request(Generic[T]):
+    template_type: Type[T] = None
 
     def __init__(
         self,
@@ -24,9 +27,9 @@ class Request(Generic[T]):
         method: str,
         query: str,
         raw: List[bytes],
-        model: Optional[BaseModel] = None
+        model: Optional[BaseModel] = None,
     ) -> None:
-        
+
         self.path = path
         self.method = method
         self._query = query
@@ -38,7 +41,6 @@ class Request(Generic[T]):
         self._raw = raw
         self._data_line_idx = -1
         self._model = model
-
 
     @property
     def headers(self):
@@ -99,4 +101,3 @@ class Request(Generic[T]):
             return self._model(**data)
         
         return data
-

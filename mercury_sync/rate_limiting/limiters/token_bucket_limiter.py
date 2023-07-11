@@ -1,4 +1,7 @@
 import asyncio
+from mercury_sync.models.limit import Limit
+from mercury_sync.models.http_message import HTTPMessage
+from mercury_sync.models.request import Request
 from types import TracebackType
 from typing import (
     Optional, 
@@ -19,13 +22,17 @@ class TokenBucketLimiter(BaseLimiter):
         "_last_check"
     )
 
-    def __init__(self, max_rate: float, time_period: float = 60) -> None:
+    def __init__(
+        self, 
+        limit: Limit
+    ) -> None:
         super().__init__(
-            max_rate,
-            time_period
+            limit.max_requests,
+            limit.period(),
+            reject_requests=limit.reject_requests
         )
 
-        self._level = max_rate
+        self._level = limit.max_requests
         self._last_check = self._loop.time()
 
     def has_capacity(self, amount: float = 1) -> bool:
@@ -49,7 +56,7 @@ class TokenBucketLimiter(BaseLimiter):
     async def acquire(
         self, 
         amount: float = 1
-    ) -> None:
+    ):
         
         if amount > self.max_rate:
             raise ValueError("Can't acquire more than the maximum capacity")
@@ -61,13 +68,18 @@ class TokenBucketLimiter(BaseLimiter):
 
         assert task is not None
 
+        rejected = False
+
+        if not self.has_capacity(amount) and self._reject_requests:
+            return True
+
         while not self.has_capacity(amount):
 
             fut = self._loop.create_future()
-            self._waiters[task] = fut
 
             try:
 
+                self._waiters[task] = fut
                 await asyncio.wait_for(
                     asyncio.shield(fut), 
                     timeout=(1 / self._rate_per_sec * amount)
@@ -77,9 +89,30 @@ class TokenBucketLimiter(BaseLimiter):
                 pass
 
             fut.cancel()
+            if self._reject_requests:
+                rejected = True
 
         self._waiters.pop(task, None)
         self._level -= amount
+
+        return rejected
+
+    async def reject(
+        self,
+        request: Request,
+        transport: asyncio.Transport
+    ):
+        if transport.is_closing() is False:
+
+            server_error_respnse = HTTPMessage(
+                path=request.path,
+                status=429,
+                error='Too Many Requests',
+                method=request.method
+            )
+
+            transport.write(server_error_respnse.prepare_response())
+
 
     async def __aenter__(self) -> None:
         await self.acquire()

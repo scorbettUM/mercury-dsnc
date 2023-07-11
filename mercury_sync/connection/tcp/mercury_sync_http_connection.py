@@ -1,12 +1,13 @@
 from __future__ import annotations
 import asyncio
 import ipaddress
+import psutil
 import socket
 import ssl
+import traceback
 import zstandard
 from collections import deque, defaultdict
 from mercury_sync.env import Env
-from mercury_sync.env.time_parser import TimeParser
 from mercury_sync.connection.base.connection_type import ConnectionType
 from mercury_sync.models.http_message import HTTPMessage
 from mercury_sync.models.http_request import HTTPRequest
@@ -65,6 +66,7 @@ class MercurySyncHTTPConnection(MercurySyncTCPConnection):
 
         rate_limit_strategy = env.MERCURY_SYNC_HTTP_RATE_LIMIT_STRATEGY
         self._rate_limiting_enabled = rate_limit_strategy != "none"
+        self._initial_cpu = psutil.cpu_percent()
 
     async def connect_client(
         self,
@@ -315,11 +317,24 @@ class MercurySyncHTTPConnection(MercurySyncTCPConnection):
 
                 ip_address, _ = transport.get_extra_info('peername')
 
-                await self._limiter.limit(
+                rejected = await self._limiter.limit(
                     ipaddress.ip_address(ip_address),
                     request,
-                    limit=handler.limit
+                    limit=handler.limit,
                 )
+
+                if rejected and transport.is_closing() is False:
+                    too_many_requests_response = HTTPMessage(
+                        path=request.path,
+                        status=429,
+                        error='Too Many Requests',
+                        protocol=request_type,
+                        method=request.method
+                    )
+
+                    transport.write(too_many_requests_response.prepare_response())
+
+                    return
 
             response_info: Tuple[
                 Union[str, None],
@@ -409,3 +424,8 @@ class MercurySyncHTTPConnection(MercurySyncTCPConnection):
                 )
 
                 transport.write(server_error_respnse.prepare_response())
+
+    async def close(self):
+        await self._limiter.close()
+        return await super().close()
+

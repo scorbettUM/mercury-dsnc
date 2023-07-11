@@ -1,5 +1,8 @@
 import asyncio
+import traceback
 from contextlib import AbstractAsyncContextManager
+from mercury_sync.models.http_message import HTTPMessage
+from mercury_sync.models.request import Request
 from types import TracebackType
 from typing import (
     Dict, 
@@ -20,7 +23,12 @@ class BaseLimiter(AbstractAsyncContextManager):
         "_loop"
     )
 
-    def __init__(self, max_rate: float, time_period: float = 60) -> None:
+    def __init__(
+        self, 
+        max_rate: float, 
+        time_period: float = 60,
+        reject_requests: bool=True
+    ) -> None:
         self.max_rate = max_rate
         self.time_period = time_period
         self._rate_per_sec = max_rate / time_period
@@ -29,30 +37,37 @@ class BaseLimiter(AbstractAsyncContextManager):
         self._waiters: Dict[asyncio.Task, asyncio.Future] = {}
         self._loop: asyncio.AbstractEventLoop = asyncio.get_event_loop()
 
+        self._reject_requests = reject_requests
+
     def has_capacity(self, amount: float = 1) -> bool:
         raise NotImplementedError('Err. - has_capacity() is not implemented on BaseLimiter')
 
     async def acquire(
         self, 
-        amount: float = 1
-    ) -> None:
+        amount: float = 1,
+    ):
         
         if amount > self.max_rate:
             raise ValueError("Can't acquire more than the maximum capacity")
 
-   
+
         task = asyncio.current_task(
             loop=self._loop
         )
 
         assert task is not None
 
+        rejected = False
+
+        if not self.has_capacity(amount) and self._reject_requests:
+            return True
+
         while not self.has_capacity(amount):
 
             fut = self._loop.create_future()
-            self._waiters[task] = fut
-
             try:
+
+                self._waiters[task] = fut
 
                 await asyncio.wait_for(
                     asyncio.shield(fut), 
@@ -61,11 +76,16 @@ class BaseLimiter(AbstractAsyncContextManager):
 
             except asyncio.TimeoutError:
                 pass
-
+                
             fut.cancel()
+
+            if self._reject_requests:
+                rejected = True
 
         self._waiters.pop(task, None)
         self._level += amount
+
+        return rejected
 
     async def __aenter__(self) -> None:
         await self.acquire()

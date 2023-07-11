@@ -9,7 +9,7 @@ from .message import Message
 
 
 class HTTPMessage(Message):
-    protocol: StrictStr
+    protocol: StrictStr="HTTP/1.1"
     path: Optional[StrictStr]
     method: Optional[
         Literal[
@@ -30,36 +30,32 @@ class HTTPMessage(Message):
 
     def prepare_response(self):
 
-        request: List[str] = [
-            f'HTTP/1.1 {self.status} {self.error}'
-        ]
+        message = 'OK'
+        if self.error:
+            message = self.error
 
-        request.extend([
-            f'{key}: {value}' for key, value in self.headers.items()
-        ])
+        head_line = f'HTTP/1.1 {self.status} {message}'
+            
+        encoded_data: str = ''
 
-        encoded_data = None
         if isinstance(self.data, Message):
-            encoded_data = json.dumps(self.data.to_data()).encode()
+            encoded_data = json.dumps(self.data.to_data())
+
+            content_length = len(encoded_data)
+            headers = f'content-length: {content_length}'
 
         elif self.data:
-            encoded_data = self.data.encode()
+            encoded_data = self.data
+
             content_length = len(encoded_data)
-            
-            request.append(
-                f'content-length: {content_length}'
-            )
+            headers = f'content-length: {content_length}'
 
         else:
-            request.append(
-                'content-length: 0'
-            )
+            headers = 'content-length: 0'
 
-        request.append('\r\n')
-        if encoded_data:
-            request.append(encoded_data)
+        response_headers = self.headers
+        if response_headers:
+            for key in response_headers:
+                headers = f'{headers}\r\n{key}: {response_headers[key]}'
 
-
-        encoded_request = '\r\n'.join(request)
-
-        return encoded_request.encode()
+        return f'{head_line}\r\n{headers}\r\n\r\n{encoded_data}'.encode()

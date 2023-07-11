@@ -11,6 +11,8 @@ from typing import (
     Union
 )
 from .limiters import (
+    AdaptiveRateLimiter,
+    CPUAdaptiveLimiter,
     LeakyBucketLimiter,
     SlidingWindowLimiter,
     TokenBucketLimiter
@@ -26,8 +28,10 @@ class Limiter:
         self._limiter: Union[TokenBucketLimiter, None] = None
 
         self._default_limit = Limit(
-            request_limit=env.MERCURY_SYNC_HTTP_RATE_LIMIT_REQUESTS,
-            request_period=env.MERCURY_SYNC_HTTP_RATE_LIMIT_PERIOD
+            max_requests=env.MERCURY_SYNC_HTTP_RATE_LIMIT_REQUESTS,
+            request_period=env.MERCURY_SYNC_HTTP_RATE_LIMIT_PERIOD,
+            reject_requests=env.MERCURY_SYNC_HTTP_RATE_LIMIT_DEFAULT_REJECT,
+            cpu_limit=env.MERCURY_SYNC_HTTP_CPU_LIMIT
         )
         
         self._rate_limit_strategy = env.MERCURY_SYNC_HTTP_RATE_LIMIT_STRATEGY
@@ -36,26 +40,21 @@ class Limiter:
         self._rate_limiter_types: Dict[
             str,
             Callable[
-                [int, str],
+                [Limit],
                 Union[
+                    AdaptiveRateLimiter,
+                    CPUAdaptiveLimiter,
                     LeakyBucketLimiter,
                     SlidingWindowLimiter,
                     TokenBucketLimiter
                 ]
             ]
         ] = {
-            "leaky-bucket": lambda max_concurrency, rate_limit_period: LeakyBucketLimiter(
-                max_concurrency,
-                rate_limit_period
-            ),
-            "sliding-window":  lambda max_concurrency, rate_limit_period: SlidingWindowLimiter(
-                max_concurrency,
-                rate_limit_period
-            ),
-            "token-bucket":  lambda max_concurrency, rate_limit_period: TokenBucketLimiter(
-                max_concurrency,
-                rate_limit_period
-            ),
+            "adaptive": lambda limit: AdaptiveRateLimiter(limit),
+            "cpu-adaptive": lambda limit: CPUAdaptiveLimiter(limit),
+            "leaky-bucket": lambda limit: LeakyBucketLimiter(limit),
+            "sliding-window":  lambda limit: SlidingWindowLimiter(limit),
+            "token-bucket":  lambda limit: TokenBucketLimiter(limit),
         }
 
         self._rate_limit_period = env.MERCURY_SYNC_HTTP_RATE_LIMIT_PERIOD
@@ -63,6 +62,8 @@ class Limiter:
         self._rate_limiters: Dict[
             str, 
             Union[
+                AdaptiveRateLimiter,
+                CPUAdaptiveLimiter,
                 LeakyBucketLimiter,
                 SlidingWindowLimiter,
                 TokenBucketLimiter
@@ -101,7 +102,7 @@ class Limiter:
         
         elif self._rate_limit_strategy == 'global':
 
-            limit_key = limit.get_key(
+            limit_key = self._default_limit.get_key(
                 request,
                 ip_address,
                 default='default'
@@ -126,11 +127,12 @@ class Limiter:
             )
 
         if limit_key and limit.matches(request, ip_address):
-            await self._check_limiter(
+            return await self._check_limiter(
                 limit_key,
                 limit
-            ) 
+            )
 
+        return False 
 
     async def _check_limiter(
         self,
@@ -146,12 +148,14 @@ class Limiter:
 
         if limiter is None:
 
-            limiter = self._rate_limiter_types.get(rate_limiter_type)(
-                limit.request_limit,
-                limit.period()
-            )
+            limiter = self._rate_limiter_types.get(rate_limiter_type)(limit)
 
             self._rate_limiters[limiter_key] = limiter
             
 
-        await limiter.acquire()
+        return await limiter.acquire()
+    
+    async def close(self):
+        for limiter in self._rate_limiters.values():
+            if isinstance(limiter, CPUAdaptiveLimiter):
+                await limiter.close()

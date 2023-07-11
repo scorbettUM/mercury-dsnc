@@ -4,6 +4,7 @@ from pydantic import (
     StrictStr,
     StrictInt,
     StrictBool,
+    StrictFloat,
     IPvAnyAddress
 )
 from typing import (
@@ -27,12 +28,16 @@ class Env(BaseModel):
         "custom"
     ]="none"
     MERCURY_SYNC_HTTP_RATE_LIMITER_TYPE: Literal[
+        "adaptive",
         "token-bucket",
         "leaky-bucket",
-        "sliding-window"
+        "sliding-window",
+        "cpu-adaptive"
     ]="sliding-window"
+    MERCURY_SYNC_HTTP_CPU_LIMIT: Union[StrictFloat, StrictInt]=25
     MERCURY_SYNC_HTTP_RATE_LIMIT_PERIOD: StrictStr='1s'
     MERCURY_SYNC_HTTP_RATE_LIMIT_REQUESTS: StrictInt=100
+    MERCURY_SYNC_HTTP_RATE_LIMIT_DEFAULT_REJECT: StrictBool=True
     MERCURY_SYNC_USE_HTTP_MSYNC_ENCRYPTION: StrictBool=False
     MERCURY_SYNC_USE_HTTP_SERVER: StrictBool=False
     MERCURY_SYNC_USE_HTTP_AND_TCP_SERVERS: StrictBool=False
@@ -45,10 +50,12 @@ class Env(BaseModel):
     @classmethod
     def types_map(self) -> Dict[str, Callable[[str], PrimaryType]]:
         return {
+            'MERCURY_SYNC_HTTP_CPU_LIMIT': float,
             'MERCURY_SYNC_HTTP_RATE_LIMIT_STRATEGY': str,
             'MERCURY_SYNC_HTTP_RATE_LIMIT_PERIOD': str,
             'MERCURY_SYNC_USE_TCP_SERVER': lambda value: True if value.lower() == 'true' else False,
             'MERCURY_SYNC_HTTP_RATE_LIMIT_REQUESTS': int,
+            'MERCURY_SYNC_HTTP_RATE_LIMIT_DEFAULT_REJECT': lambda value: True if value.lower() == 'true' else False,
             'MERCURY_SYNC_USE_HTTP_MSYNC_ENCRYPTION': lambda value: True if value.lower() == 'true' else False,
             'MERCURY_SYNC_USE_HTTP_SERVER': lambda value: True if value.lower() == 'true' else False,
             'MERCURY_SYNC_TCP_CONNECT_RETRIES': int,
