@@ -442,17 +442,18 @@ class MercurySyncHTTPConnection(MercurySyncTCPConnection):
 
         except Exception:
 
-            if transport.is_closing() is False:
+            async with self._backoff_sem:
+                if transport.is_closing() is False:
 
-                server_error_respnse = HTTPMessage(
-                    path=request.path,
-                    status=500,
-                    error='Internal Error',
-                    protocol=request_type,
-                    method=request.method
-                )
+                    server_error_respnse = HTTPMessage(
+                        path=request.path,
+                        status=500,
+                        error='Internal Error',
+                        protocol=request_type,
+                        method=request.method
+                    )
 
-                transport.write(server_error_respnse.prepare_response())
+                    transport.write(server_error_respnse.prepare_response())
 
     async def close(self):
         await self._limiter.close()
