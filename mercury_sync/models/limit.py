@@ -34,6 +34,7 @@ class Limit(BaseModel):
     min_requests: Optional[StrictInt]
     request_period: StrictStr='1s'
     reject_requests: StrictBool=True
+    request_backoff: StrictStr='1s'
     cpu_limit: Optional[Union[StrictFloat, StrictInt]]
     limiter_type: Optional[
         Literal[
@@ -64,6 +65,11 @@ class Limit(BaseModel):
         ]
     ]
 
+    @property
+    def backoff(self):
+        return TimeParser(self.request_backoff).time
+
+    @property
     def period(self):
         return TimeParser(self.request_period).time
 

@@ -32,7 +32,7 @@ class AdaptiveRateLimiter(BaseLimiter):
     ):
         super().__init__(
             limit.max_requests,
-            limit.period()
+            limit.period
         )
 
         min_requests = limit.min_requests

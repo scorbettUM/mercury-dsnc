@@ -64,9 +64,29 @@ class MercurySyncHTTPConnection(MercurySyncTCPConnection):
 
         self._limiter = Limiter(env)
 
+        self._backoff_sem: Union[asyncio.Semaphore, None] = None
+
         rate_limit_strategy = env.MERCURY_SYNC_HTTP_RATE_LIMIT_STRATEGY
         self._rate_limiting_enabled = rate_limit_strategy != "none"
+        self._rate_limiting_backoff_rate = env.MERCURY_SYNC_HTTP_RATE_LIMIT_BACKOFF_RATE
+
         self._initial_cpu = psutil.cpu_percent()
+
+    async def connect_async(
+        self, 
+        cert_path: Optional[str] = None, 
+        key_path: Optional[str] = None, 
+        worker_socket: Optional[socket.socket] = None
+    ):
+        self._backoff_sem = asyncio.Semaphore(
+            self._rate_limiting_backoff_rate
+        )
+
+        return await super().connect_async(
+            cert_path, 
+            key_path, 
+            worker_socket
+        )
 
     async def connect_client(
         self,
@@ -324,17 +344,26 @@ class MercurySyncHTTPConnection(MercurySyncTCPConnection):
                 )
 
                 if rejected and transport.is_closing() is False:
-                    too_many_requests_response = HTTPMessage(
-                        path=request.path,
-                        status=429,
-                        error='Too Many Requests',
-                        protocol=request_type,
-                        method=request.method
-                    )
 
-                    transport.write(too_many_requests_response.prepare_response())
+                    async with self._backoff_sem:
+                        too_many_requests_response = HTTPMessage(
+                            path=request.path,
+                            status=429,
+                            error='Too Many Requests',
+                            protocol=request_type,
+                            method=request.method
+                        )
 
-                    return
+                        transport.write(too_many_requests_response.prepare_response())
+
+                        return
+                
+                elif rejected:
+
+                    async with self._backoff_sem:
+                        transport.close()
+
+                        return
 
             response_info: Tuple[
                 Union[str, None],

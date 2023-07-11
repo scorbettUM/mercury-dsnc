@@ -34,7 +34,9 @@ class Env(BaseModel):
         "sliding-window",
         "cpu-adaptive"
     ]="sliding-window"
-    MERCURY_SYNC_HTTP_CPU_LIMIT: Union[StrictFloat, StrictInt]=25
+    MERCURY_SYNC_HTTP_CPU_LIMIT: Union[StrictFloat, StrictInt]=50
+    MERCURY_SYNC_HTTP_RATE_LIMIT_BACKOFF_RATE: StrictInt=10
+    MERCURY_SYNC_HTTP_RATE_LIMIT_BACKOFF: StrictStr='1s'
     MERCURY_SYNC_HTTP_RATE_LIMIT_PERIOD: StrictStr='1s'
     MERCURY_SYNC_HTTP_RATE_LIMIT_REQUESTS: StrictInt=100
     MERCURY_SYNC_HTTP_RATE_LIMIT_DEFAULT_REJECT: StrictBool=True
@@ -50,6 +52,8 @@ class Env(BaseModel):
     @classmethod
     def types_map(self) -> Dict[str, Callable[[str], PrimaryType]]:
         return {
+            'MERCURY_SYNC_HTTP_RATE_LIMIT_BACKOFF_RATE': int,
+            'MERCURY_SYNC_HTTP_RATE_LIMIT_BACKOFF': str,
             'MERCURY_SYNC_HTTP_CPU_LIMIT': float,
             'MERCURY_SYNC_HTTP_RATE_LIMIT_STRATEGY': str,
             'MERCURY_SYNC_HTTP_RATE_LIMIT_PERIOD': str,

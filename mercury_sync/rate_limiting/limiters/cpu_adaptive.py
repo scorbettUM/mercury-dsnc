@@ -2,8 +2,9 @@ import asyncio
 import math
 import os
 import psutil
+import statistics
 from mercury_sync.models.limit import Limit
-from typing import Union
+from typing import Union, List
 from .base_limiter import BaseLimiter
 
 
@@ -24,7 +25,10 @@ class CPUAdaptiveLimiter(BaseLimiter):
         "_max_queue",
         "_sample_task",
         "_running",
-        "_process"
+        "_process",
+        "_max_backoff",
+        "_min_backoff",
+        "_history"
     )
 
     def __init__(
@@ -33,7 +37,7 @@ class CPUAdaptiveLimiter(BaseLimiter):
      ) -> None:
         super().__init__(
             limit.max_requests,
-            limit.period(),
+            limit.period,
             reject_requests=limit.reject_requests
         )
 
@@ -42,23 +46,33 @@ class CPUAdaptiveLimiter(BaseLimiter):
             cpu_limit = 50
 
         self._cpu_limit = cpu_limit
-        self._sleep_backoff = 0.1
-        self._max_sleep = self._sleep_backoff * 10
+        self._sleep_backoff = limit.backoff
+        self._min_backoff = self._sleep_backoff
+        self._max_backoff = math.ceil(self._sleep_backoff * 10)
         self._last_check = self._loop.time()
         self._current_time = self._loop.time()
         self._previous_count = limit.max_requests
-        self._current_cpu = psutil.cpu_percent()
+
+
+        self._history: List[float] = []
+
         self._max_queue = limit.max_requests
         self._sample_task: Union[asyncio.Task, None] = None
         self._running = False
         self._activate_limit = False
         self._process = psutil.Process(os.getpid())
 
+        self._current_cpu = self._process.cpu_percent()
+        self._history.append(self._current_cpu)
+
     def has_capacity(self, amount: float = 1) -> bool:
 
         elapsed = self._loop.time() - self._last_check
 
-        self._sleep_backoff = max(self._sleep_backoff - (1 / self._rate_per_sec * elapsed), 0)
+        self._sleep_backoff = max(
+            self._sleep_backoff - (1 / self._rate_per_sec * elapsed), 
+            self._min_backoff
+        )
 
         if (self._loop.time() - self._current_time) > self.time_period:
             self._current_time = math.floor(
@@ -122,6 +136,7 @@ class CPUAdaptiveLimiter(BaseLimiter):
 
                 if self._activate_limit:
                     await asyncio.sleep(self._sleep_backoff)
+                    self._max_backoff += (1/math.sqrt(self._rate_per_sec))
 
             except asyncio.TimeoutError:
                 pass
@@ -130,7 +145,7 @@ class CPUAdaptiveLimiter(BaseLimiter):
             
             rejected = True
 
-        self._sleep_backoff = min(self._sleep_backoff * 2, self._max_sleep)
+        self._sleep_backoff = min(self._sleep_backoff * 2, self._max_backoff)
         self._waiters.pop(task, None)
         self._level += amount
 
@@ -138,14 +153,23 @@ class CPUAdaptiveLimiter(BaseLimiter):
     
     async def _sample_cpu(self):
         while  self._running:
+
+            elapsed = self._loop.time() - self._last_check
+
+            if elapsed > self.time_period:
+                self._history.pop(0)
+
             self._current_cpu = self._process.cpu_percent()
+            self._history.append(self._current_cpu)
+
             await asyncio.sleep(0.1)
 
-            if self._current_cpu > self._cpu_limit:
+            if self._current_cpu >= self._cpu_limit:
                 self._activate_limit = True
 
-            else:
+            elif statistics.median(self._history) < self._cpu_limit:
                 self._activate_limit = False
+                self._max_backoff -= (1/self._rate_per_sec)
 
     async def close(self):
         self._running = False

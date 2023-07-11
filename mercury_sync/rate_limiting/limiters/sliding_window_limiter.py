@@ -23,7 +23,7 @@ class SlidingWindowLimiter(BaseLimiter):
 
         super().__init__(
             limit.max_requests,
-            limit.period(),
+            limit.period,
             reject_requests=limit.reject_requests
         )
 
