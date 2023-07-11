@@ -1,5 +1,5 @@
-import asyncio
 from mercury_sync.env import Env
+from mercury_sync.env.memory_parser import MemoryParser
 from mercury_sync.models.limit import Limit
 from mercury_sync.models.request import Request
 from pydantic import IPvAnyAddress
@@ -14,6 +14,7 @@ from .limiters import (
     AdaptiveRateLimiter,
     CPUAdaptiveLimiter,
     LeakyBucketLimiter,
+    ResourceAdaptiveLimiter,
     SlidingWindowLimiter,
     TokenBucketLimiter
 )
@@ -25,13 +26,24 @@ class Limiter:
         env: Env
     ) -> None:
         
-        self._limiter: Union[TokenBucketLimiter, None] = None
+        self._limiter: Union[
+            Union[
+                AdaptiveRateLimiter,
+                CPUAdaptiveLimiter,
+                LeakyBucketLimiter,
+                ResourceAdaptiveLimiter,
+                SlidingWindowLimiter,
+                TokenBucketLimiter
+            ], 
+            None
+        ] = None
 
         self._default_limit = Limit(
             max_requests=env.MERCURY_SYNC_HTTP_RATE_LIMIT_REQUESTS,
             request_period=env.MERCURY_SYNC_HTTP_RATE_LIMIT_PERIOD,
             reject_requests=env.MERCURY_SYNC_HTTP_RATE_LIMIT_DEFAULT_REJECT,
-            cpu_limit=env.MERCURY_SYNC_HTTP_CPU_LIMIT
+            cpu_limit=env.MERCURY_SYNC_HTTP_CPU_LIMIT,
+            memory_limit=env.MERCURY_SYNC_HTTP_MEMORY_LIMIT
         )
         
         self._rate_limit_strategy = env.MERCURY_SYNC_HTTP_RATE_LIMIT_STRATEGY
@@ -45,6 +57,7 @@ class Limiter:
                     AdaptiveRateLimiter,
                     CPUAdaptiveLimiter,
                     LeakyBucketLimiter,
+                    ResourceAdaptiveLimiter,
                     SlidingWindowLimiter,
                     TokenBucketLimiter
                 ]
@@ -53,6 +66,7 @@ class Limiter:
             "adaptive": lambda limit: AdaptiveRateLimiter(limit),
             "cpu-adaptive": lambda limit: CPUAdaptiveLimiter(limit),
             "leaky-bucket": lambda limit: LeakyBucketLimiter(limit),
+            "rate-adaptive": lambda limit: ResourceAdaptiveLimiter(limit),
             "sliding-window":  lambda limit: SlidingWindowLimiter(limit),
             "token-bucket":  lambda limit: TokenBucketLimiter(limit),
         }
@@ -107,6 +121,8 @@ class Limiter:
                 ip_address,
                 default='default'
             )
+
+            limit = self._default_limit
 
         elif self._rate_limit_strategy == "ip-endpoint" and limit:
 

@@ -8,7 +8,7 @@ from typing import Union, List
 from .base_limiter import BaseLimiter
 
 
-class CPUAdaptiveLimiter(BaseLimiter):
+class ResourceAdaptiveLimiter(BaseLimiter):
 
     __slots__ = (
         "max_rate",
@@ -28,7 +28,10 @@ class CPUAdaptiveLimiter(BaseLimiter):
         "_process",
         "_max_fast_backoff",
         "_min_backoff",
-        "_history"
+        "_cpu_history",
+        "_memory_history",
+        "_memory_limit",
+        "_current_memory"
     )
 
     def __init__(
@@ -54,8 +57,10 @@ class CPUAdaptiveLimiter(BaseLimiter):
         self._current_time = self._loop.time()
         self._previous_count = limit.max_requests
 
+        self._memory_limit = limit.memory
 
-        self._history: List[float] = []
+        self._cpu_history: List[float] = []
+        self._memory_history: List[float] = []
 
         self._max_queue = limit.max_requests
         self._sample_task: Union[asyncio.Task, None] = None
@@ -64,41 +69,9 @@ class CPUAdaptiveLimiter(BaseLimiter):
         self._process = psutil.Process(os.getpid())
 
         self._current_cpu = self._process.cpu_percent()
-        self._history.append(self._current_cpu)
+        self._current_memory = self._get_memory()
 
-    def has_capacity(self, amount: float = 1) -> bool:
-
-        elapsed = self._loop.time() - self._last_check
-
-        self._backoff = max(
-            self._backoff - (1 / self._rate_per_sec * elapsed), 
-            self._min_backoff
-        )
-
-        if (self._loop.time() - self._current_time) > self.time_period:
-            self._current_time = math.floor(
-                self._loop.time()/self.time_period
-            ) * self.time_period
-
-            self._previous_count = self._level
-            self._level = 0
-
-        self._rate_per_sec = (
-            self._previous_count * (
-                self.time_period - (self._loop.time() - self._current_time)
-            )/self.time_period
-        ) + (self._level + amount)
-
-        if self._rate_per_sec < self.max_rate:
-
-            for fut in self._waiters.values():
-                if not fut.done():
-                    fut.set_result(True)
-                    break
-        
-        self._last_check = self._loop.time()
-
-        return self._rate_per_sec <= self.max_rate
+        self._cpu_history.append(self._current_cpu)
     
     async def acquire(
         self, 
@@ -123,7 +96,7 @@ class CPUAdaptiveLimiter(BaseLimiter):
 
         rejected = False
 
-        while not self.has_capacity(amount) or self._activate_limit:
+        while self._activate_limit:
 
             fut = self._loop.create_future()
             try:
@@ -135,12 +108,10 @@ class CPUAdaptiveLimiter(BaseLimiter):
                     timeout=self._backoff
                 )
 
-                if self._activate_limit:
-                    await asyncio.sleep(self._backoff)
-                    self._max_fast_backoff = min(
-                        self._max_fast_backoff + (1/math.sqrt(self._rate_per_sec)),
-                        self._max_backoff
-                    )
+                self._max_fast_backoff = min(
+                    self._max_fast_backoff + (1/math.sqrt(self._rate_per_sec)),
+                    self._max_backoff
+                )
 
             except asyncio.TimeoutError:
                 pass
@@ -158,25 +129,38 @@ class CPUAdaptiveLimiter(BaseLimiter):
     async def _sample_cpu(self):
         while  self._running:
 
+
             self._current_cpu = self._process.cpu_percent()
-            self._history.append(self._current_cpu)
+            self._current_memory = self._get_memory()
+
+            self._cpu_history.append(self._current_cpu)
+            self._memory_history.append(self._current_memory)
 
             elapsed = self._loop.time() - self._last_check
 
             if elapsed > self.time_period:
-                self._history.pop(0)
+                self._cpu_history.pop(0)
 
-            if self._current_cpu >= self._cpu_limit:
+
+            median_cpu_usage = statistics.median(self._cpu_history)
+            median_memory_usage = statistics.median(self._memory_history)
+
+
+            if self._current_cpu >= self._cpu_limit or self._current_memory >= self._memory_limit:
                 self._activate_limit = True
 
-            elif statistics.median(self._history) < self._cpu_limit:
+            elif median_cpu_usage < self._cpu_limit and median_memory_usage < self._memory_limit:
                 self._activate_limit = False
                 self._max_fast_backoff = max(
                     self._max_fast_backoff - (1/self._rate_per_sec),
                     self._min_backoff
                 )
 
+            
             await asyncio.sleep(0.1)
+
+    def _get_memory(self):
+        return self._process.memory_info().rss / 1024 ** 2
 
     async def close(self):
         self._running = False

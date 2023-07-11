@@ -1,4 +1,3 @@
-from ipaddress import IPv4Address
 from pydantic import (
     BaseModel,
     StrictStr,
@@ -29,11 +28,13 @@ class Env(BaseModel):
     ]="none"
     MERCURY_SYNC_HTTP_RATE_LIMITER_TYPE: Literal[
         "adaptive",
-        "token-bucket",
+        "cpu-adaptive",
         "leaky-bucket",
+        "rate-adaptive",
         "sliding-window",
-        "cpu-adaptive"
+        "token-bucket",
     ]="sliding-window"
+    MERCURY_SYNC_HTTP_MEMORY_LIMIT: StrictStr='512mb'
     MERCURY_SYNC_HTTP_CPU_LIMIT: Union[StrictFloat, StrictInt]=50
     MERCURY_SYNC_HTTP_RATE_LIMIT_BACKOFF_RATE: StrictInt=10
     MERCURY_SYNC_HTTP_RATE_LIMIT_BACKOFF: StrictStr='1s'
@@ -52,6 +53,7 @@ class Env(BaseModel):
     @classmethod
     def types_map(self) -> Dict[str, Callable[[str], PrimaryType]]:
         return {
+            'MERCURY_SYNC_HTTP_MEMORY_LIMIT': str,
             'MERCURY_SYNC_HTTP_RATE_LIMIT_BACKOFF_RATE': int,
             'MERCURY_SYNC_HTTP_RATE_LIMIT_BACKOFF': str,
             'MERCURY_SYNC_HTTP_CPU_LIMIT': float,

@@ -1,3 +1,4 @@
+from mercury_sync.env.memory_parser import MemoryParser
 from mercury_sync.env.time_parser import TimeParser
 from pydantic import (
     BaseModel,
@@ -36,11 +37,15 @@ class Limit(BaseModel):
     reject_requests: StrictBool=True
     request_backoff: StrictStr='1s'
     cpu_limit: Optional[Union[StrictFloat, StrictInt]]
+    memory_limit: Optional[StrictStr]
     limiter_type: Optional[
         Literal[
-            "token-bucket",
+            "adaptive",
+            "cpu-adaptive",
             "leaky-bucket",
-            "sliding-window"
+            "rate-adaptive",
+            "sliding-window",
+            "token-bucket",
         ]
     ]
     limit_key: Optional[
@@ -72,6 +77,10 @@ class Limit(BaseModel):
     @property
     def period(self):
         return TimeParser(self.request_period).time
+    
+    @property
+    def memory(self):
+        return MemoryParser(self.memory_limit).megabytes(accuracy=4)
 
     def get_key(
         self, 
@@ -106,4 +115,3 @@ class Limit(BaseModel):
             )
 
         return matches_rules
-
