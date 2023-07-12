@@ -11,7 +11,8 @@ from typing import (
     TypeVar, 
     Generic,
     Optional,
-    Type
+    Type,
+    Literal
 )
 
 
@@ -24,7 +25,15 @@ class Request(Generic[T]):
     def __init__(
         self,
         path: str,
-        method: str,
+        method: Literal[
+            "GET",
+            "HEAD",
+            "OPTIONS",
+            "POST",
+            "PUT",
+            "PATCH",
+            "DELETE"
+        ],
         query: str,
         raw: List[bytes],
         model: Optional[BaseModel] = None,

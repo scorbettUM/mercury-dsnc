@@ -12,11 +12,11 @@ from concurrent.futures import (
     ProcessPoolExecutor
 )
 from inspect import signature
+from mercury_sync.middleware.base import Middleware
 from mercury_sync.connection.tcp.mercury_sync_http_connection import MercurySyncHTTPConnection
 from mercury_sync.connection.tcp.mercury_sync_tcp_connection import MercurySyncTCPConnection
 from mercury_sync.connection.udp.mercury_sync_udp_connection import MercurySyncUDPConnection
 from mercury_sync.env import load_env, Env
-from mercury_sync.env.time_parser import TimeParser
 from mercury_sync.models.error import Error
 from mercury_sync.models.message import Message
 from pydantic import BaseModel
@@ -104,7 +104,6 @@ def start_pool(
 
 
 class Controller(Generic[*P]):
-
     services: Dict[str, Type[Controller]] = {}
 
     def __init__(
@@ -119,8 +118,12 @@ class Controller(Generic[*P]):
         plugins: Dict[
             str,
             Type[Union[*P]]
-        ]={}
+        ]={},
+        middleware: List[Middleware]= []
     ) -> None:
+        
+        if env is None:
+            env = load_env(Env)
     
         self.name = self.__class__.__name__
         self._instance_id = random.randint(0, 2**16)
@@ -142,6 +145,7 @@ class Controller(Generic[*P]):
         self.port = port
         self.cert_path = cert_path
         self.key_path = key_path
+        self.middleware = middleware
 
         self._env = env
         self._engine: Union[ProcessPoolExecutor, ThreadPoolExecutor, None] = None 
@@ -152,9 +156,6 @@ class Controller(Generic[*P]):
         self._waiter: Union[asyncio.Future, None] = None
 
         self._plugins: Dict[str, PluginGroup[*P]] = {}
-
-        if env is None:
-            env = load_env(Env)
 
         self.engine_type = engine
         self._response_parsers: Dict[str, Message] = {}
@@ -262,14 +263,18 @@ class Controller(Generic[*P]):
 
                 if is_http:
 
-                    event_http_method: str = method.method
+                    for middleware_operator in self.middleware:
+                        method = middleware_operator.wrap(method)
+
+                    event_http_methods: List[str] = method.methods
                     path: str = method.path
 
-                    event_key = f'{event_http_method}_{path}'
-                    controller_methods[event_key] = method
+                    for event_http_method in event_http_methods:
 
+                        event_key = f'{event_http_method}_{path}'
 
-                    supported_http_handlers[path][event_http_method] = method_name
+                        controller_methods[event_key] = method
+                        supported_http_handlers[path][event_http_method] = method_name
 
 
                 else:
@@ -297,52 +302,57 @@ class Controller(Generic[*P]):
 
             if not_internal and not_reserved and is_http:
 
+                for middleware_operator in self.middleware:
+                        method = middleware_operator.wrap(method)
+
                 response_type = rpc_signature.return_annotation
                 args = get_args(response_type)
+
                 response_model: Tuple[
                     Union[BaseModel, str, None], 
                     int
                 ] = args[0]
 
-                event_http_method: List[str] = method.method
+                event_http_methods: List[str] = method.methods
                 path: str = method.path
 
-                
-                for param_type in rpc_signature.parameters.values():
-                    args = get_args(param_type.annotation)
-                    
-                    if len(args) > 0 and args[0] in BaseModel.__subclasses__():
+                for event_http_method in event_http_methods:
 
-                        path: str = method.path
+                    for param_type in rpc_signature.parameters.values():
+                        args = get_args(param_type.annotation)
+                        
+                        if len(args) > 0 and args[0] in BaseModel.__subclasses__():
 
-                        event_key = f'{event_http_method}_{path}'
+                            path: str = method.path
 
-                        model = args[0]
+                            event_key = f'{event_http_method}_{path}'
 
-                        controller_models[event_key] = model
+                            model = args[0]
 
-                controller_methods[event_key] = method
+                            controller_models[event_key] = model
 
-                if isinstance(method.responses, dict):
+                    controller_methods[event_key] = method
 
-                    responses = method.responses
+                    if isinstance(method.responses, dict):
 
-                    for status, status_response_model in responses.items():
-                        status_key = f'{event_http_method}_{path}_{status}'
+                        responses = method.responses
 
-                        if issubclass(status_response_model, BaseModel):
-                            response_parsers[status_key] = lambda response: status_response_model(
-                                **response
-                            ).json()
+                        for status, status_response_model in responses.items():
+                            status_key = f'{event_http_method}_{path}_{status}'
 
-                if isinstance(method.serializers, dict):
+                            if issubclass(status_response_model, BaseModel):
+                                response_parsers[status_key] = lambda response: status_response_model(
+                                    **response
+                                ).json()
 
-                    serializers = method.serializers
+                    if isinstance(method.serializers, dict):
 
-                    for status, serializer in serializers.items():
-                        status_key = f'{event_http_method}_{path}_{status}'
+                        serializers = method.serializers
 
-                        response_parsers[status_key] = serializer
+                        for status, serializer in serializers.items():
+                            status_key = f'{event_http_method}_{path}_{status}'
+
+                            response_parsers[status_key] = serializer
 
         self._parsers: Dict[str, Message] = {}
         self._events: Dict[str, Message] = {}

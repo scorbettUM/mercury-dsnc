@@ -34,6 +34,7 @@ class Env(BaseModel):
         "sliding-window",
         "token-bucket",
     ]="sliding-window"
+    MERCURY_SYNC_HTTP_CORS_ENABLED: StrictBool=False
     MERCURY_SYNC_HTTP_MEMORY_LIMIT: StrictStr='512mb'
     MERCURY_SYNC_HTTP_CPU_LIMIT: Union[StrictFloat, StrictInt]=50
     MERCURY_SYNC_HTTP_RATE_LIMIT_BACKOFF_RATE: StrictInt=10
@@ -53,6 +54,7 @@ class Env(BaseModel):
     @classmethod
     def types_map(self) -> Dict[str, Callable[[str], PrimaryType]]:
         return {
+            'MERCURY_SYNC_HTTP_CORS_ENABLED': lambda value: True if value.lower() == 'true' else False,
             'MERCURY_SYNC_HTTP_MEMORY_LIMIT': str,
             'MERCURY_SYNC_HTTP_RATE_LIMIT_BACKOFF_RATE': int,
             'MERCURY_SYNC_HTTP_RATE_LIMIT_BACKOFF': str,
