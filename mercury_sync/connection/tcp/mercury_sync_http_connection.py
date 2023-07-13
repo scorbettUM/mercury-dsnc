@@ -4,13 +4,13 @@ import ipaddress
 import psutil
 import socket
 import ssl
-import traceback
 import zstandard
 from collections import deque, defaultdict
 from mercury_sync.env import Env
 from mercury_sync.connection.base.connection_type import ConnectionType
 from mercury_sync.models.http_message import HTTPMessage
 from mercury_sync.models.http_request import HTTPRequest
+from mercury_sync.models.response import Response
 from mercury_sync.models.request import Request
 from mercury_sync.rate_limiting import Limiter
 from pydantic import BaseModel
@@ -61,6 +61,8 @@ class MercurySyncHTTPConnection(MercurySyncTCPConnection):
                 str
             ]
         ] = {}
+
+        self._middleware_enabled: Dict[str, bool] = {}
 
         self._limiter = Limiter(env)
 
@@ -305,11 +307,9 @@ class MercurySyncHTTPConnection(MercurySyncTCPConnection):
         data: bytes,
         transport: asyncio.Transport
     ):
-        
-
         if self._use_encryption:
-            decompressed_data = self._decompressor.decompress(data)
-            data = self._encryptor.decrypt(decompressed_data)
+            encrypted_data = self._encryptor.encrypt(data)
+            data = self._compressor.compress(encrypted_data)
         
         request_data = data.split(b'\r\n')
         method, path, request_type = request_data[0].decode().split(' ')
@@ -366,7 +366,12 @@ class MercurySyncHTTPConnection(MercurySyncTCPConnection):
                         return
 
             response_info: Tuple[
-                Union[str, None],
+                Union[
+                    Response,
+                    BaseModel,
+                    str, 
+                    None
+                ],
                 int
             ] = await handler(request)
 
@@ -382,15 +387,36 @@ class MercurySyncHTTPConnection(MercurySyncTCPConnection):
             encoded_data: str = ''
 
             response_parser = self._response_parsers.get(response_key)
+            middleware_enabled = self._middleware_enabled.get(path)
+            response_headers: Dict[str, str] = handler.response_headers
 
-            if response_parser:
+            if middleware_enabled and response_parser:
 
-                parsed_response = response_parser(response_data)
+                encoded_data = response_parser(response_data.data)
+                response_headers.update(
+                    response_data.headers
+                )
 
-                encoded_data = parsed_response
-
-                content_length = len(parsed_response)
+                content_length = len(encoded_data)
                 headers = f'content-length: {content_length}'
+
+            elif middleware_enabled:
+
+                encoded_data = response_data.data
+                response_headers.update(
+                    response_data.headers
+                )
+
+                content_length = len(encoded_data)
+                headers = f'content-length: {content_length}'
+
+            elif response_parser:
+
+                encoded_data = response_parser(response_data)
+
+                content_length = len(encoded_data)
+                headers = f'content-length: {content_length}'
+
 
             elif response_data:
                 encoded_data = response_data
@@ -401,18 +427,16 @@ class MercurySyncHTTPConnection(MercurySyncTCPConnection):
             else:
                 headers = 'content-length: 0'
 
-            response_headers = handler.response_headers
-            if response_headers:
-                for key in response_headers:
-                    headers = f'{headers}\r\n{key}: {response_headers[key]}'
+            for key in response_headers:
+                headers = f'{headers}\r\n{key}: {response_headers[key]}'
 
-            response_bytes = f'{head_line}\r\n{headers}\r\n\r\n{encoded_data}'.encode()
-
+            response_data = f'{head_line}\r\n{headers}\r\n\r\n{encoded_data}'.encode()
+            
             if self._use_encryption:
-                encrypted_data = self._encryptor.encrypt(response_bytes)
-                response_bytes = self._compressor.compress(encrypted_data)
+                encrypted_data = self._encryptor.encrypt(response_data)
+                response_data = self._compressor.compress(encrypted_data)
 
-            transport.write(response_bytes)
+            transport.write(response_data)
 
         except KeyError:
             

@@ -27,7 +27,8 @@ def endpoint(
             "POST",
             "PUT",
             "PATCH",
-            "DELETE"
+            "DELETE",
+            "TRACE"
         ]
     ]=["GET"],
     responses: Optional[
@@ -69,7 +70,8 @@ def endpoint(
         func.path = path
         func.methods = methods
         func.as_http = True
-        func.response_headers = response_headers
+        
+        func.response_headers = response_headers or {}
         func.responses = responses
         func.serializers = serializers
         func.limit = limit

@@ -26,7 +26,8 @@ HTTPMethod = Literal[
     "POST",
     "PUT",
     "PATCH",
-    "DELETE"
+    "DELETE",
+    "TRACE"
 ]
 
 

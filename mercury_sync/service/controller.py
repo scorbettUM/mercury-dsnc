@@ -12,7 +12,10 @@ from concurrent.futures import (
     ProcessPoolExecutor
 )
 from inspect import signature
-from mercury_sync.middleware.base import Middleware
+from mercury_sync.middleware.base import (
+    Middleware,
+    Wrapper
+)
 from mercury_sync.connection.tcp.mercury_sync_http_connection import MercurySyncHTTPConnection
 from mercury_sync.connection.tcp.mercury_sync_tcp_connection import MercurySyncTCPConnection
 from mercury_sync.connection.udp.mercury_sync_udp_connection import MercurySyncUDPConnection
@@ -147,6 +150,10 @@ class Controller(Generic[*P]):
         self.key_path = key_path
         self.middleware = middleware
 
+        if len(self.middleware) > 0:
+            last_middleware = middleware[-1]
+            last_middleware.terminal = True
+
         self._env = env
         self._engine: Union[ProcessPoolExecutor, ThreadPoolExecutor, None] = None 
         self._udp_queue: Dict[Tuple[str, int], asyncio.Queue] = defaultdict(asyncio.Queue)
@@ -227,6 +234,8 @@ class Controller(Generic[*P]):
             'close'
         ]
 
+        middleware_enabled: Dict[str, bool] = {}
+
         response_parsers: Dict[
             str, 
             Callable[
@@ -262,12 +271,12 @@ class Controller(Generic[*P]):
                         controller_models[method_name] = model
 
                 if is_http:
+                    event_http_methods: List[str] = method.methods
+                    path: str = method.path
 
                     for middleware_operator in self.middleware:
                         method = middleware_operator.wrap(method)
-
-                    event_http_methods: List[str] = method.methods
-                    path: str = method.path
+                        middleware_enabled[path] = True
 
                     for event_http_method in event_http_methods:
 
@@ -303,7 +312,8 @@ class Controller(Generic[*P]):
             if not_internal and not_reserved and is_http:
 
                 for middleware_operator in self.middleware:
-                        method = middleware_operator.wrap(method)
+                    method = middleware_operator.wrap(method)
+                    middleware_enabled[path] = True
 
                 response_type = rpc_signature.return_annotation
                 args = get_args(response_type)
@@ -379,6 +389,7 @@ class Controller(Generic[*P]):
 
                 if isinstance(tcp_connection, MercurySyncHTTPConnection):
                     tcp_connection._supported_handlers = supported_http_handlers
+                    tcp_connection._middleware_enabled = middleware_enabled
 
                 self._parsers[method_name] = model
 

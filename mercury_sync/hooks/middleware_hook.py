@@ -1,12 +1,11 @@
 import functools
 
 
-def server():
+def middleware():
 
     def wraps(func):
 
-        func.server_only = True
-        func.as_http = False
+        func.is_middleware = True
 
         @functools.wraps(func)
         def decorator(
