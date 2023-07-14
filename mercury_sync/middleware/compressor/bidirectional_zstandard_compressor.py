@@ -1,5 +1,5 @@
+import zstandard
 from base64 import b64encode
-from gzip import compress
 from mercury_sync.middleware.base import (
     Middleware,
     MiddlewareType
@@ -15,7 +15,7 @@ from typing import (
 )
 
 
-class GZipCompressor(Middleware):
+class BidirectionalZStandardompressor(Middleware):
 
     def __init__(
         self, 
@@ -40,13 +40,55 @@ class GZipCompressor(Middleware):
     ) -> None:
         super().__init__(
             self.__class__.__name__,
-            middleware_type=MiddlewareType.UNIDIRECTIONAL_AFTER
+            middleware_type=MiddlewareType.BIDIRECTIONAL
         )
 
         self.compression_level = compression_level
         self.serializers = serializers
+        self._compressor = zstandard.ZstdCompressor()
 
-    async def __run__(
+    async def __pre__(
+        self,
+        request: Request,
+        response: Union[
+            BaseModel,
+            str,
+            None
+        ],
+        status: int
+    ):
+        try:
+           
+            if request.raw != b'':
+
+                request.content = self._compressor.compress(
+                    request.content
+                )
+
+            return (
+                request,
+                Response(
+                    request.path,
+                    request.method,
+                    headers={
+                        'x-compression-encoding': 'zstd'
+                    }
+                ),
+                200
+            ), True
+
+        except Exception as e:
+            return (
+                None,
+                Response(
+                    request.path,
+                    request.method,
+                    data=str(e)
+                ),
+                500
+            ), False
+        
+    async def __post__(
         self, 
         request: Request,
         response: Union[
@@ -64,6 +106,7 @@ class GZipCompressor(Middleware):
             
             if response is None:
                 return (
+                    request,
                     Response(
                         request.path,
                         request.method,
@@ -73,19 +116,19 @@ class GZipCompressor(Middleware):
                 ), True
             
             elif isinstance(response, str):
-           
-                compressed_data = compress(
-                    response.encode(),
-                    compresslevel=self.compression_level
+
+                compressed_data = self._compressor.compress(
+                    response.encode()
                 )
 
-
                 return (
+                    request,
                     Response(
                         request.path,
                         request.method,
                         headers={
-                            'content-encoding': 'gzip'
+                            'x-compression-encoding': 'gzip',
+                            'content-type': 'text/plain'
                         },
                         data=b64encode(compressed_data).decode()
                     ),
@@ -94,10 +137,9 @@ class GZipCompressor(Middleware):
             
             else:
                 serialized = self.serializers[request.path](response)
-                
-                compressed_data = compress(
-                    serialized,
-                    compresslevel=self.compression_level
+
+                compressed_data = self._compressor.compress(
+                    serialized
                 )
 
                 response.headers.update({
@@ -106,6 +148,7 @@ class GZipCompressor(Middleware):
                 })
 
                 return (
+                    request,
                     Response(
                         request.path,
                         request.method,
@@ -117,6 +160,7 @@ class GZipCompressor(Middleware):
             
         except KeyError:
             return (
+                request,
                 Response(
                     request.path,
                     request.method,
@@ -127,6 +171,7 @@ class GZipCompressor(Middleware):
 
         except Exception as e:
             return (
+                request,
                 Response(
                     request.path,
                     request.method,

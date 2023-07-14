@@ -34,6 +34,22 @@ RequestHandler = Callable[
     ]
 ]
 
+WrappedHandler = Callable[
+    [
+        Request,
+        Response,
+        int
+    ],
+    Coroutine[
+        Any,
+        Any,
+        Tuple[
+            Response,
+            int
+        ]
+    ]
+]
+
 MiddlewareHandler = Callable[
     [
         Request,
@@ -51,4 +67,26 @@ MiddlewareHandler = Callable[
 ]
 
 
-Handler = Union[RequestHandler, MiddlewareHandler]
+BidirectionalMiddlewareHandler = Callable[
+    [
+        Request,
+        Response,
+        int
+    ],
+    Coroutine[
+        Any, 
+        Any, 
+        Tuple[
+            Tuple[
+                Request,
+                Response, 
+                int
+            ],
+            bool
+        ]
+    ]
+]
+
+
+
+Handler = Union[RequestHandler, WrappedHandler]

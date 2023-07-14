@@ -15,7 +15,7 @@ from .base_wrapper import BaseWrapper
 from .types import MiddlewareType
 from .types import (
     Handler,
-    MiddlewareHandler
+    BidirectionalMiddlewareHandler
 )
 
 
@@ -104,8 +104,8 @@ class BidirectionalWrapper(BaseWrapper):
         if self.handler.response_headers and self.response_headers:
             self.handler.response_headers = {}
 
-        self.pre: Optional[MiddlewareHandler] = None
-        self.post: Optional[MiddlewareHandler] = None
+        self.pre: Optional[BidirectionalMiddlewareHandler] = None
+        self.post: Optional[BidirectionalMiddlewareHandler] = None
 
         self.middleware_type = middleware_type
 
@@ -114,28 +114,30 @@ class BidirectionalWrapper(BaseWrapper):
         request: Request
     ):
 
-        (request, middleware_status), run_next = await self.pre(request)
-
-        if run_next is False:
-            return Response(
-                request.path,
-                request.method,
-                headers=request.headers,
-                response=request.data
-            ), middleware_status
-        
-        response, status = await self.handler(request)
-
-        (response, middleware_status), run_next = await self.post(
+        (request, response, middleware_status), run_next = await self.pre(
             request,
-            response,
-            status
+            None,
+            None
         )
-
-        if self.response_headers:
-            response.headers.update(response)
 
         if run_next is False:
             return response, middleware_status
+        
+        if self.wraps:
+            result, status = await self.handler(request)
+            result.headers.update(response.headers)
 
+        else:
+            result, status = await self.handler(request)
+            
+
+        (request, response, middleware_status), run_next = await self.post(
+            request,
+            result,
+            status
+        )
+
+        if run_next is False:
+            return response, middleware_status
+        
         return response, status

@@ -1,3 +1,8 @@
+import zstandard
+from base64 import (
+    b64encode,
+    b64decode
+)
 from http.cookies import (
     BaseCookie,
     SimpleCookie
@@ -74,6 +79,9 @@ class CRSF(Middleware):
         self.cookie_samesite = cookie_samesite
         self.header_name = header_name
 
+        self._compressor = zstandard.ZstdCompressor()
+        self._decompressor = zstandard.ZstdDecompressor()
+
         super().__init__(
             self.__class__.__name__,
             response_headers={}
@@ -116,8 +124,16 @@ class CRSF(Middleware):
 
             try:
 
-                decoded_crsf_cookie: str = self.encryptor.decrypt(crsf_cookie)
-                decoded_crsf_token: str = self.encryptor.decrypt(submitted_csrf_token)
+                decoded_crsf_cookie: str = self.encryptor.decrypt(
+                    self._decompressor.decompress(
+                        b64decode(crsf_cookie.encode())
+                    )
+                )
+                decoded_crsf_token: str = self.encryptor.decrypt(
+                    self._decompressor.decompress(
+                        b64decode(submitted_csrf_token.encode())
+                    )
+                )
 
                 csrf_tokens_match = compare_digest(
                     decoded_crsf_cookie, 
@@ -155,7 +171,11 @@ class CRSF(Middleware):
                 ).encode()
             )
 
-            cookie[cookie_name] = str(crsf_token)
+            cookie[cookie_name] = b64encode(
+                self._compressor.compress(
+                    crsf_token
+                )
+            ).decode()
 
             cookie[cookie_name]["path"] = self.cookie_path
             cookie[cookie_name]["secure"] = self.cookie_secure

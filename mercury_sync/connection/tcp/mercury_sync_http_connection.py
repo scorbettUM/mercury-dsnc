@@ -382,7 +382,7 @@ class MercurySyncHTTPConnection(MercurySyncTCPConnection):
             ) = response_info
 
             response_key = f'{handler_key}_{status_code}'
-
+            
             encoded_data: str = ''
 
             response_parser = self._response_parsers.get(response_key)
@@ -465,6 +465,8 @@ class MercurySyncHTTPConnection(MercurySyncTCPConnection):
                 transport.write(method_not_allowed_response.prepare_response())
 
         except Exception:
+
+            print(traceback.format_exc())
 
             async with self._backoff_sem:
                 if transport.is_closing() is False:

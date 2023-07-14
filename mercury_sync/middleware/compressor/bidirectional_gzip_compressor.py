@@ -1,3 +1,5 @@
+import traceback
+from base64 import b64encode
 from gzip import compress
 from mercury_sync.middleware.base import (
     Middleware,
@@ -47,21 +49,37 @@ class BidirectionalGZipCompressor(Middleware):
 
     async def __pre__(
         self,
-        request: Request
+        request: Request,
+        response: Union[
+            BaseModel,
+            str,
+            None
+        ],
+        status: int
     ):
         try:
-            request.content = compress(
-                request.content,
-                compresslevel=self.compression_level
-            )
+
+            if request.raw != b'':
+                request.content = compress(
+                    request.content,
+                    compresslevel=self.compression_level
+                )
 
             return (
                 request,
+                Response(
+                    request.path,
+                    request.method,
+                    headers={
+                        'x-compression-encoding': 'zstd'
+                    }
+                ),
                 200
             ), True
 
         except Exception as e:
             return (
+                None,
                 Response(
                     request.path,
                     request.method,
@@ -74,6 +92,7 @@ class BidirectionalGZipCompressor(Middleware):
         self, 
         request: Request,
         response: Union[
+            Response,
             BaseModel,
             str,
             None
@@ -87,6 +106,7 @@ class BidirectionalGZipCompressor(Middleware):
             
             if response is None:
                 return (
+                    request,
                     Response(
                         request.path,
                         request.method,
@@ -96,17 +116,22 @@ class BidirectionalGZipCompressor(Middleware):
                 ), True
             
             elif isinstance(response, str):
+
+                compressed_data = compress(
+                    response.encode(),
+                    compresslevel=self.compression_level
+                )
+
                 return (
+                    request,
                     Response(
                         request.path,
                         request.method,
                         headers={
-                            'content-encoding': 'gzip'
+                            'x-compression-encoding': 'gzip',
+                            'content-type': 'text/plain'
                         },
-                        data=compress(
-                            response.encode(),
-                            compresslevel=self.compression_level
-                        ).decode()
+                        data=b64encode(compressed_data).decode()
                     ),
                     status
                 ), True
@@ -114,24 +139,30 @@ class BidirectionalGZipCompressor(Middleware):
             else:
                 serialized = self.serializers[request.path](response)
 
+                compressed_data = compress(
+                    serialized,
+                    compresslevel=self.compression_level
+                )
+
+                response.headers.update({
+                    'x-compression-encoding': 'gzip',
+                    'content-type': 'text/plain'
+                })
+
                 return (
+                    request,
                     Response(
                         request.path,
                         request.method,
-                        headers={
-                            'content-encoding': 'gzip',
-                            'content-type': 'application/json'
-                        },
-                        data=compress(
-                            serialized.encode(),
-                            compresslevel=self.compression_level
-                        ).decode()
+                        headers=response.headers,
+                        data=b64encode(compressed_data).decode()
                     ),
                     status
                 ), True
             
         except KeyError:
             return (
+                request,
                 Response(
                     request.path,
                     request.method,
@@ -142,6 +173,7 @@ class BidirectionalGZipCompressor(Middleware):
 
         except Exception as e:
             return (
+                request,
                 Response(
                     request.path,
                     request.method,

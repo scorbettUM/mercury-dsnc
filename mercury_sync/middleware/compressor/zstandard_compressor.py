@@ -1,5 +1,4 @@
 import zstandard
-import traceback
 from base64 import b64encode
 from mercury_sync.middleware.base import (
     Middleware,
@@ -86,9 +85,7 @@ class ZStandardCompressor(Middleware):
                             'x-compression-encoding': 'zstd',
                             'content-type': 'text/plain'
                         },
-                        data=b64encode(compressed_data).decode(
-                            encoding='ascii'
-                        )
+                        data=b64encode(compressed_data).decode()
                     ),
                     status
                 ), True
@@ -100,17 +97,17 @@ class ZStandardCompressor(Middleware):
                     serialized
                 )
 
+                response.headers.update({
+                    'x-compression-encoding': 'gzip',
+                    'content-type': 'text/plain'
+                })
+
                 return (
                     Response(
                         request.path,
                         request.method,
-                        headers={
-                            'x-compression-encoding': 'zstd',
-                            'content-type': 'text/plain'
-                        },
-                        data=b64encode(compressed_data).decode(
-                            encoding='ascii'
-                        )
+                        headers=response.headers,
+                        data=b64encode(compressed_data).decode()
                     ),
                     status
                 ), True

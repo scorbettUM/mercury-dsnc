@@ -98,7 +98,19 @@ class Middleware:
         
         return wrapper
     
-    async def __pre__(self, request: Request):
+    async def __pre__(
+        self, 
+        request: Request,
+        response: Response,
+        status: int
+    ) -> Tuple[
+        Tuple[
+            Request,
+            Response, 
+            int
+        ],
+        bool
+    ]:
         raise NotImplementedError('Err. - __pre__() is not implemented for base Middleware class.')
     
     async def __post__(
@@ -106,7 +118,14 @@ class Middleware:
         request: Request,
         response: Response,
         status: int
-    ):
+    ) -> Tuple[
+        Tuple[
+            Request,
+            Response, 
+            int
+        ],
+        bool
+    ]:
         raise NotImplementedError('Err. - __post__() is not implemented for base Middleware class.')
     
     async def __run__(
@@ -114,7 +133,10 @@ class Middleware:
         request: Request,
         response: Response,
         status: int
-    ):
+    ) -> Tuple[
+        Tuple[Response, int],
+        bool
+    ]:
         raise NotImplementedError('Err. - __post__() is not implemented for base Middleware class.')
     
     async def run(
