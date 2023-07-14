@@ -1,2 +1,3 @@
-from .gzip import GZipCompressor
-from .zstandard import ZstandardCompressor
+from .bidirectional_gzip_compressor import BidirectionalGZipCompressor
+from .gzip_compressor import GZipCompressor
+from .zstandard_compressor import ZStandardCompressor

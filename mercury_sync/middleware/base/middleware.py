@@ -12,8 +12,9 @@ from typing import (
     Literal,
     Tuple
 )
-from .middleware_type import MiddlewareType
-from .wrapper import Wrapper
+from .bidirectional_wrapper import BidirectionalWrapper
+from .unidirectional_wrapper import UnidirectionalWrapper
+from .types import MiddlewareType
 
 
 class Middleware:
@@ -21,7 +22,7 @@ class Middleware:
     def __init__(
         self,
         name: str,
-        middleware_type: MiddlewareType=MiddlewareType.BEFORE,
+        middleware_type: MiddlewareType=MiddlewareType.UNIDIRECTIONAL_BEFORE,
         methods: Optional[
             List[
                 Literal[
@@ -44,6 +45,12 @@ class Middleware:
         self.response_headers = response_headers
         self.middleware_type = middleware_type
 
+        self._wrapper_types = {
+            MiddlewareType.BIDIRECTIONAL: BidirectionalWrapper,
+            MiddlewareType.UNIDIRECTIONAL_BEFORE: UnidirectionalWrapper,
+            MiddlewareType.UNIDIRECTIONAL_AFTER: UnidirectionalWrapper,
+        }
+
     def __call__(self, request: Request) -> Tuple[
         Tuple[Response, int],
         bool
@@ -62,20 +69,53 @@ class Middleware:
         ]
     ):
         
-        
-        wrapper = Wrapper(
+        wrapper = self._wrapper_types.get(
+            self.middleware_type,
+            BidirectionalWrapper(
+                self.name,
+                handler,
+                methods=self.methods,
+                response_headers=self.response_headers,
+                middleware_type=self.middleware_type 
+            )
+        )(
             self.name,
             handler,
             methods=self.methods,
             response_headers=self.response_headers,
-            middleware_type=self.middleware_type
+            middleware_type=self.middleware_type 
         )
 
-        wrapper.run = self
+        if isinstance(wrapper, BidirectionalWrapper):
+            wrapper.pre = self.__pre__
+            wrapper.post = self.__post__
 
-        wrapper.run.response_headers.update(wrapper.response_headers)
+        elif isinstance(wrapper, UnidirectionalWrapper):
+
+            wrapper.run = self.__run__
+        
+            self.response_headers.update(wrapper.response_headers)
         
         return wrapper
+    
+    async def __pre__(self, request: Request):
+        raise NotImplementedError('Err. - __pre__() is not implemented for base Middleware class.')
+    
+    async def __post__(
+        self, 
+        request: Request,
+        response: Response,
+        status: int
+    ):
+        raise NotImplementedError('Err. - __post__() is not implemented for base Middleware class.')
+    
+    async def __run__(
+        self, 
+        request: Request,
+        response: Response,
+        status: int
+    ):
+        raise NotImplementedError('Err. - __post__() is not implemented for base Middleware class.')
     
     async def run(
         self,

@@ -1,21 +1,20 @@
-from gzip import compress, decompress
-from mercury_sync.middleware.base import Middleware
-from mercury_sync.middleware.base.middleware_type import MiddlewareType
+from gzip import compress
+from mercury_sync.middleware.base import (
+    Middleware,
+    MiddlewareType
+)
 from mercury_sync.models.response import Response
 from mercury_sync.models.request import Request
 from pydantic import BaseModel
 from typing import (
     Dict, 
-    List, 
-    Literal, 
-    Optional, 
     Union,
     Tuple,
     Callable
 )
 
 
-class GZipCompressor(Middleware):
+class BidirectionalGZipCompressor(Middleware):
 
     def __init__(
         self, 
@@ -40,13 +39,38 @@ class GZipCompressor(Middleware):
     ) -> None:
         super().__init__(
             self.__class__.__name__,
-            middleware_type=MiddlewareType.AFTER
+            middleware_type=MiddlewareType.BIDIRECTIONAL
         )
 
         self.compression_level = compression_level
         self.serializers = serializers
 
-    async def __call__(
+    async def __pre__(
+        self,
+        request: Request
+    ):
+        try:
+            request.content = compress(
+                request.content,
+                compresslevel=self.compression_level
+            )
+
+            return (
+                request,
+                200
+            ), True
+
+        except Exception as e:
+            return (
+                Response(
+                    request.path,
+                    request.method,
+                    data=str(e)
+                ),
+                500
+            ), False
+        
+    async def __post__(
         self, 
         request: Request,
         response: Union[
@@ -63,13 +87,19 @@ class GZipCompressor(Middleware):
             
             if response is None:
                 return (
-                    Response(data=response),
+                    Response(
+                        request.path,
+                        request.method,
+                        data=response
+                    ),
                     status
                 ), True
             
             elif isinstance(response, str):
                 return (
                     Response(
+                        request.path,
+                        request.method,
                         headers={
                             'content-encoding': 'gzip'
                         },
@@ -86,6 +116,8 @@ class GZipCompressor(Middleware):
 
                 return (
                     Response(
+                        request.path,
+                        request.method,
                         headers={
                             'content-encoding': 'gzip',
                             'content-type': 'application/json'
@@ -101,6 +133,8 @@ class GZipCompressor(Middleware):
         except KeyError:
             return (
                 Response(
+                    request.path,
+                    request.method,
                     data=f'No serializer for {request.path} found.'
                 ),
                 500
@@ -109,6 +143,8 @@ class GZipCompressor(Middleware):
         except Exception as e:
             return (
                 Response(
+                    request.path,
+                    request.method,
                     data=str(e)
                 ),
                 500

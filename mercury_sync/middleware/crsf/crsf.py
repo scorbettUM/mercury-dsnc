@@ -4,7 +4,9 @@ from http.cookies import (
 )
 from mercury_sync.env import Env, load_env
 from mercury_sync.encryption import AESGCMFernet
-from mercury_sync.middleware.base import Middleware
+from mercury_sync.middleware.base import (
+    Middleware
+)
 from mercury_sync.models.response import Response
 from mercury_sync.models.request import Request
 from secrets import (
@@ -77,7 +79,12 @@ class CRSF(Middleware):
             response_headers={}
         )
 
-    async def __call__(self, request: Request) -> Tuple[
+    async def __run__(
+        self, 
+        request: Request,
+        response: Response,
+        status: int
+    ) -> Tuple[
         Tuple[Response, int],
         bool
     ]:
@@ -126,8 +133,12 @@ class CRSF(Middleware):
             if crsf_match_failed:
                 return (
                     Response(
+                        request.path,
+                        request.method,
                         data="CSRF token verification failed"
-                    ), 403), False
+                    ), 
+                    403
+                ), False
 
         crsf_cookie = request.cookies.get(self.cookie_name)
 
@@ -155,11 +166,24 @@ class CRSF(Middleware):
                 cookie[cookie_name]["domain"] = self.cookie_domain  # pragma: no cover
 
             response_headers["set-cookie"] = cookie.output(header="").strip()
+
+        if response and status:
+            response.headers.update(response_headers)
+
+            return (
+                response,
+                status
+            ), True
         
-        return (Response(
-            headers=response_headers,
-            data=None
-        ), 200), True
+        return (
+            Response(
+                request.path,
+                request.method,
+                headers=response_headers,
+                data=None
+            ), 
+            200
+        ), True
         
 
     def _has_sensitive_cookies(self, cookies: Dict[str, str]) -> bool:

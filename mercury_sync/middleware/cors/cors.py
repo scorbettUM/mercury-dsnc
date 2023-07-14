@@ -1,4 +1,6 @@
-from mercury_sync.middleware.base import Middleware
+from mercury_sync.middleware.base import (
+    Middleware
+)
 from mercury_sync.models.response import Response
 from mercury_sync.models.request import Request
 from typing import Union, Optional, List, Literal, Tuple
@@ -40,8 +42,19 @@ class Cors(Middleware):
         self.origins = self._cors_config.access_control_allow_origin
         self.cors_methods = self._cors_config.access_control_allow_methods
         self.cors_headers = self._cors_config.access_control_allow_headers
+        self.allow_credentials = self._cors_config.access_control_allow_credentials
 
         self.allow_all_origins = '*' in self._cors_config.access_control_allow_origin
+
+        allowed_headers = self._cors_config.access_control_allow_headers
+        self.allow_all_headers = False
+
+        if allowed_headers:
+            self.allow_all_headers = '*' in allowed_headers
+
+        self.simple_headers = self._cors_config.to_simple_headers()
+        self.preflight_headers = self._cors_config.to_preflight_headers()
+        self.preflight_explicit_allow_origin = not self.allow_all_origins or self.allow_credentials
         
         super().__init__(
             self.__class__.__name__,
@@ -49,15 +62,18 @@ class Cors(Middleware):
             response_headers=self._cors_config.to_headers()
         )
         
-    async def __call__(self, request: Request) -> Tuple[
+    async def __run__(
+        self, 
+        request: Request,
+        response: Optional[Response],
+        status: Optional[int]
+    ) -> Tuple[
         Tuple[Response, int],
         bool
     ]:
 
         headers = request.headers
         method = request.method
-
-        response_headers = {}
 
         origin = headers.get('origin')
         access_control_request_method = headers.get('access-control-request-method')
@@ -66,23 +82,30 @@ class Cors(Middleware):
 
         if method == "OPTIONS" and access_control_request_method:
 
+            response_headers = dict(self.preflight_headers)
+
             failures: List[str] = []
 
             if self.allow_all_origins is False and origin not in self.origins:
                 failures.append("origin")
 
+            elif self.preflight_explicit_allow_origin:
+                response['Access-Control-Allow-Origin'] = origin
+
             if access_control_request_method not in self.cors_methods:
                 failures.append("method")
-            
-            if access_control_request_headers:
-                headers = [
-                    header for header in access_control_request_headers.split(
-                        ','
-                    ) if header.lower().strip() in self.cors_headers
-                ]
 
-                if len(headers) < 1:
-                    failures.append("headers")
+            if self.allow_all_headers and access_control_request_headers is not None:
+                response_headers["Access-Control-Allow-Headers"] = access_control_request_headers
+            
+            elif access_control_request_headers:
+
+                for header in access_control_request_headers.split(
+                    ','
+                ):
+                    if header.lower().strip() not in self.cors_headers:
+                        failures.append("headers")
+                        break
                 
             if len(failures) > 0:
 
@@ -90,25 +113,55 @@ class Cors(Middleware):
 
                 return (
                     Response(
+                        request.path,
+                        request.method,
+                        headers=response_headers,
                         data=f"Disallowed CORS {failures_message}"
                     ),
                     401
                 ), False
             
-            has_cookie = headers.get('set-cookie')
-            if self.allow_all_origins and has_cookie:
-                response_headers['Access-Control-Allow_origin'] = origin
+            if response and status:
+                response.headers.update(response_headers)
 
-            elif origin in self.origins:
-                response_headers['Access-Control-Allow_origin'] = origin
+                return (
+                    response, 
+                    status
+                ), False
             
             return (
                 Response(
+                    request.path,
+                    request.method,
                     headers=response_headers,
                     data=None
-                ), 204), False
+                ),
+                204
+            ), False
+        
+        response_headers = dict(self.simple_headers)
 
-        return (Response(
-            headers=response_headers,
-            data=None
-        ), 200), True
+        has_cookie = headers.get('cookie')
+        if self.allow_all_origins and has_cookie:
+            response_headers['access-control-allow-origin'] = origin
+
+        elif origin in self.origins:
+            response_headers['access-control-allow-origin'] = origin
+        
+        if response and status:
+            response.headers.update(response_headers)
+
+            return (
+                response,
+                status
+            ), True
+
+        return (
+            Response(
+                request.path,
+                request.method,
+                headers=response_headers,
+                data=None
+            ), 
+            200
+        ), True

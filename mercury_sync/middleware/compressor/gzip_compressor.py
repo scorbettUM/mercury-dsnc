@@ -1,7 +1,8 @@
-import zstandard
-from base64 import b64decode
-from mercury_sync.middleware.base import Middleware
-from mercury_sync.middleware.base.middleware_type import MiddlewareType
+from gzip import compress, decompress
+from mercury_sync.middleware.base import (
+    Middleware,
+    MiddlewareType
+)
 from mercury_sync.models.response import Response
 from mercury_sync.models.request import Request
 from pydantic import BaseModel
@@ -16,10 +17,11 @@ from typing import (
 )
 
 
-class ZstandardCompressor(Middleware):
+class GZipCompressor(Middleware):
 
     def __init__(
         self, 
+        compression_level: int=9,
         serializers: Dict[
             str,
             Callable[
@@ -40,16 +42,17 @@ class ZstandardCompressor(Middleware):
     ) -> None:
         super().__init__(
             self.__class__.__name__,
-            middleware_type=MiddlewareType.AFTER
+            middleware_type=MiddlewareType.UNIDIRECTIONAL_AFTER
         )
 
+        self.compression_level = compression_level
         self.serializers = serializers
-        self._compressor = zstandard.ZstdCompressor()
 
-    async def __call__(
+    async def __run__(
         self, 
         request: Request,
         response: Union[
+            Response,
             BaseModel,
             str,
             None
@@ -63,42 +66,44 @@ class ZstandardCompressor(Middleware):
             
             if response is None:
                 return (
-                    Response(data=response),
+                    Response(
+                        request.path,
+                        request.method,
+                        data=response
+                    ),
                     status
                 ), True
             
             elif isinstance(response, str):
-
-                compressed_data: bytes = self._compressor.compress(
-                    response.encode()
-                )
-
                 return (
                     Response(
+                        request.path,
+                        request.method,
                         headers={
-                            'content-encoding': 'zstd'
+                            'content-encoding': 'gzip'
                         },
-                        data=b64decode(
-                            compressed_data
+                        data=compress(
+                            response.encode(),
+                            compresslevel=self.compression_level
                         ).decode()
                     ),
                     status
                 ), True
             
             else:
-
                 serialized = self.serializers[request.path](response)
-                compressed_data: bytes = self._compressor.compress(
-                    serialized.encode()
-                )
 
                 return (
                     Response(
+                        request.path,
+                        request.method,
                         headers={
-                            'content-encoding': 'zstd'
+                            'content-encoding': 'gzip',
+                            'content-type': 'application/json'
                         },
-                        data=b64decode(
-                            compressed_data
+                        data=compress(
+                            serialized.encode(),
+                            compresslevel=self.compression_level
                         ).decode()
                     ),
                     status
@@ -107,6 +112,8 @@ class ZstandardCompressor(Middleware):
         except KeyError:
             return (
                 Response(
+                    request.path,
+                    request.method,
                     data=f'No serializer for {request.path} found.'
                 ),
                 500
@@ -115,6 +122,8 @@ class ZstandardCompressor(Middleware):
         except Exception as e:
             return (
                 Response(
+                    request.path,
+                    request.method,
                     data=str(e)
                 ),
                 500

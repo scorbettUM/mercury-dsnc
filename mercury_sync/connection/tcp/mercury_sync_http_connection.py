@@ -4,6 +4,7 @@ import ipaddress
 import psutil
 import socket
 import ssl
+import traceback
 import zstandard
 from collections import deque, defaultdict
 from mercury_sync.env import Env
@@ -314,9 +315,9 @@ class MercurySyncHTTPConnection(MercurySyncTCPConnection):
         request_data = data.split(b'\r\n')
         method, path, request_type = request_data[0].decode().split(' ')
 
-        handler_key = f'{method}_{path}'
-
         try:
+
+            handler_key = f'{method}_{path}'
 
             handler = self.events[handler_key]
 
@@ -382,8 +383,6 @@ class MercurySyncHTTPConnection(MercurySyncTCPConnection):
 
             response_key = f'{handler_key}_{status_code}'
 
-            head_line = f'HTTP/1.1 {status_code} OK'
-            
             encoded_data: str = ''
 
             response_parser = self._response_parsers.get(response_key)
@@ -402,7 +401,8 @@ class MercurySyncHTTPConnection(MercurySyncTCPConnection):
 
             elif middleware_enabled:
 
-                encoded_data = response_data.data
+                encoded_data = response_data.data or ''
+
                 response_headers.update(
                     response_data.headers
                 )
@@ -430,7 +430,7 @@ class MercurySyncHTTPConnection(MercurySyncTCPConnection):
             for key in response_headers:
                 headers = f'{headers}\r\n{key}: {response_headers[key]}'
 
-            response_data = f'{head_line}\r\n{headers}\r\n\r\n{encoded_data}'.encode()
+            response_data = f'HTTP/1.1 {status_code} OK\r\n{headers}\r\n\r\n{encoded_data}'.encode()
             
             if self._use_encryption:
                 encrypted_data = self._encryptor.encrypt(response_data)
@@ -439,27 +439,27 @@ class MercurySyncHTTPConnection(MercurySyncTCPConnection):
             transport.write(response_data)
 
         except KeyError:
-            
-            if self._supported_handlers.get(request.path) is None:
+
+            if self._supported_handlers.get(path) is None:
             
                 not_found_response = HTTPMessage(
-                    path=request.path,
+                    path=path,
                     status=404,
                     error='Not Found',
                     protocol=request_type,
-                    method=request.method
+                    method=method
                 )
 
                 transport.write(not_found_response.prepare_response())
 
-            elif self._supported_handlers[request.path].get(request.method) is None:
+            elif self._supported_handlers[path].get(method) is None:
 
                 method_not_allowed_response = HTTPMessage(
-                    path=request.path,
+                    path=path,
                     status=405,
                     error='Method Not Allowed',
                     protocol=request_type,
-                    method=request.method
+                    method=method
                 )
 
                 transport.write(method_not_allowed_response.prepare_response())
@@ -470,11 +470,11 @@ class MercurySyncHTTPConnection(MercurySyncTCPConnection):
                 if transport.is_closing() is False:
 
                     server_error_respnse = HTTPMessage(
-                        path=request.path,
+                        path=path,
                         status=500,
                         error='Internal Error',
                         protocol=request_type,
-                        method=request.method
+                        method=method
                     )
 
                     transport.write(server_error_respnse.prepare_response())
