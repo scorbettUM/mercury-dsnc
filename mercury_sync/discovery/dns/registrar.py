@@ -1,7 +1,9 @@
 import asyncio
 import socket
+import time
 from mercury_sync.discovery.dns.core.url import URL
 from mercury_sync.env import load_env, Env
+from mercury_sync.env.time_parser import TimeParser
 from mercury_sync.hooks import (
     client,
     server
@@ -286,19 +288,89 @@ class Registrar(Controller):
                 
         return entries\
         
-    async def discover(self, url: str):
+    async def discover(
+        self, 
+        url: str,
+        expected: Optional[int]=None,
+        timeout: Optional[str]=None
+    ):
+
+        services_data: Dict[str, Dict[str, Union[str, int,  Dict[str, str]]]] = {}
+        services: Dict[str, Service] = {}
+
+        
+
+        if expected and timeout:
+
+            poll_timeout = TimeParser(timeout).time
+
+            return await asyncio.wait_for(
+                self.poll_for_services(
+                    url,
+                    expected
+                ),
+                timeout=poll_timeout
+            )
+        
+        else:
+            return await self.get_services(url)
+    
+    async def poll_for_services(
+        self,
+        url: str,
+        expected: int
+    ):
+        services_data: Dict[str, Dict[str, Union[str, int,  Dict[str, str]]]] = {}
+        services: Dict[str, Service] = {}
+
+        discovered = 0
+
+        while discovered < expected:
+            
+            ptr_records = await self.get_ptr_records(url)
+
+            srv_records = await self.get_srv_records(ptr_records)
+            txt_records = await self.get_txt_records(ptr_records)  
+
+
+            for record in srv_records:
+                service_url = record.to_domain(record.record_type.name)
+
+                services_data[service_url] = {
+                    "service_instance": record.instance_name,
+                    "service_name": record.service_name,
+                    "service_protocol": record.domain_protocol,
+                    'service_url': service_url,
+                    'service_ip': record.domain_targets[0],
+                    'service_port': record.domain_port,
+                    'service_context': {}
+                }
+
+            for record in txt_records:
+                service_url = record.domain_name
+
+                services_data[service_url]['service_context'].update(record.domain_values)
+
+            for service_url, data in services_data.items():
+                services[service_url] = Service(**data)
+            
+            discovered = len(services)
+
+        return list(services.values())
+
+    async def get_services(self, url: str):
+
+        services_data: Dict[str, Dict[str, Union[str, int,  Dict[str, str]]]] = {}
+        services: Dict[str, Service] = {}
 
         ptr_records = await self.get_ptr_records(url)
 
         srv_records = await self.get_srv_records(ptr_records)
         txt_records = await self.get_txt_records(ptr_records)  
 
-        services_data: Dict[str, Dict[str, Union[str, int,  Dict[str, str]]]] = {}
-        services: Dict[str, Service] = {}
 
         for record in srv_records:
             service_url = record.to_domain(record.record_type.name)
-
 
             services_data[service_url] = {
                 "service_instance": record.instance_name,
@@ -318,9 +390,8 @@ class Registrar(Controller):
 
         for service_url, data in services_data.items():
             services[service_url] = Service(**data)
-
-
-        return list(services.values())
+        
+        return list(services.values())  
 
     async def get_ptr_records(
         self,

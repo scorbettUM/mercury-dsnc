@@ -179,9 +179,6 @@ class MercurySyncTCPConnection:
             except Exception:
                 pass
 
-
-            self.server_socket
-
             self.server_socket.setblocking(False)
 
         elif self.connected is False:
@@ -193,7 +190,7 @@ class MercurySyncTCPConnection:
 
         if self.connected is False:
 
-            server = self._loop.create_server(
+            server = await self._loop.create_server(
                 lambda: MercurySyncTCPServerProtocol(
                     self.read
                 ),
@@ -201,7 +198,7 @@ class MercurySyncTCPConnection:
                 ssl=self._server_ssl_context
             )
 
-            self._server = await server
+            self._server = server
             self.connected = True
 
             self._cleanup_task = self._loop.create_task(self._cleanup())

@@ -3,9 +3,11 @@ import asyncio
 import functools
 import inspect
 import multiprocessing as mp
+import os
 import random
 import signal
 import socket
+import sys
 from collections import defaultdict
 from concurrent.futures import (
     ThreadPoolExecutor,
@@ -16,6 +18,7 @@ from mercury_sync.middleware.base import Middleware
 from mercury_sync.connection.tcp.mercury_sync_http_connection import MercurySyncHTTPConnection
 from mercury_sync.connection.tcp.mercury_sync_tcp_connection import MercurySyncTCPConnection
 from mercury_sync.connection.udp.mercury_sync_udp_connection import MercurySyncUDPConnection
+from mercury_sync.connection.udp.mercury_sync_udp_multicast_connection import MercurySyncUDPMulticastConnection
 from mercury_sync.env import load_env, Env
 from mercury_sync.models.error import Error
 from mercury_sync.models.message import Message
@@ -37,17 +40,34 @@ from typing import (
 )
 from .plugin_group import PluginGroup
 from .service import Service
+from .socket import (
+    bind_tcp_socket,
+    bind_udp_socket
+)
 
 P = TypeVarTuple('P')
 
 
-def handle_worker_loop_stop(signame, loop: asyncio.AbstractEventLoop):
+mp.allow_connection_pickling()
+spawn = mp.get_context("spawn")
+
+
+def handle_worker_loop_stop(
+    signame, 
+    loop: asyncio.AbstractEventLoop,
+    waiter: Optional[asyncio.Future]
+):
+    if waiter:
+        waiter.set_result(None)
+
     loop.stop()
 
 
-def handle_loop_stop(signame, executor: Union[ProcessPoolExecutor, ThreadPoolExecutor]):
+def handle_loop_stop(
+    signame, 
+    executor: Union[ProcessPoolExecutor, ThreadPoolExecutor],
+):
         try:
-            
             executor.shutdown(cancel_futures=True)
 
         except BrokenPipeError:
@@ -57,12 +77,45 @@ def handle_loop_stop(signame, executor: Union[ProcessPoolExecutor, ThreadPoolExe
             pass
 
 
+async def run(
+    udp_connecton: MercurySyncUDPConnection,
+    tcp_connection: MercurySyncTCPConnection,
+    config: Dict[str, Union[int, socket.socket, str]]={}
+):
+    engine_type = config.get('engine_type')
+    loop = asyncio.get_event_loop()
+    
+    waiter = loop.create_future()
+
+    for signame in ('SIGINT', 'SIGTERM', 'SIG_IGN'):
+        loop.add_signal_handler(
+            getattr(signal, signame),
+            lambda signame=signame: handle_worker_loop_stop(
+                signame,
+                loop,
+                waiter
+            )
+        )  
+
+    await udp_connecton.connect_async(
+        cert_path=config.get('cert_path'),
+        key_path=config.get('key_path'),
+        worker_socket=config.get('udp_socket')
+    )
+    await tcp_connection.connect_async(
+        cert_path=config.get('cert_path'),
+        key_path=config.get('key_path'),
+        worker_socket=config.get('tcp_socket')
+    )
+
+
+    await waiter
+
+
 def start_pool(
     udp_connection: MercurySyncUDPConnection,
     tcp_connection: MercurySyncTCPConnection,
-    cert_path: Optional[str]=None,
-    key_path: Optional[str]=None,
-    engine_type: Literal["process", "thread", "async"] = None
+    config: Dict[str, Union[int, socket.socket, str]]={},
 ):
     import asyncio
 
@@ -73,15 +126,6 @@ def start_pool(
     except ImportError:
         pass
 
-    udp_connection.connect(
-        cert_path=cert_path,
-        key_path=key_path
-    )
-    tcp_connection.connect(
-        cert_path=cert_path,
-        key_path=key_path
-    )
-
     try:
 
         loop = asyncio.get_event_loop()
@@ -90,17 +134,20 @@ def start_pool(
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
 
-    if engine_type == "process":
-        for signame in ('SIGINT', 'SIGTERM', 'SIG_IGN'):
-            loop.add_signal_handler(
-                getattr(signal, signame),
-                lambda signame=signame: handle_worker_loop_stop(
-                    signame,
-                    loop
-                )
-            )  
+    stdin_fileno = config.get('stdin_fileno')
 
-    loop.run_forever()
+    if stdin_fileno is not None:
+        sys.stdin = os.fdopen(stdin_fileno)
+
+    loop = asyncio.get_event_loop()
+    
+    loop.run_until_complete(
+        run( 
+            udp_connection,
+            tcp_connection,
+            config
+        )
+    )
 
 
 class Controller(Generic[*P]):
@@ -114,7 +161,7 @@ class Controller(Generic[*P]):
         key_path: Optional[str]=None,
         workers: int=0,
         env: Optional[Env]=None,
-        engine: Literal["process", "thread", 'async']="async",
+        engine: Literal["process", "async"]="async",
         plugins: Dict[
             str,
             Type[Union[*P]]
@@ -148,7 +195,7 @@ class Controller(Generic[*P]):
         self.middleware = middleware
 
         self._env = env
-        self._engine: Union[ProcessPoolExecutor, ThreadPoolExecutor, None] = None 
+        self._engine: Union[ProcessPoolExecutor, None] = None 
         self._udp_queue: Dict[Tuple[str, int], asyncio.Queue] = defaultdict(asyncio.Queue)
         self._tcp_queue: Dict[Tuple[str, int], asyncio.Queue] = defaultdict(asyncio.Queue)
         self._cleanup_task: Union[asyncio.Task, None] = None
@@ -164,45 +211,45 @@ class Controller(Generic[*P]):
             self._instance_id + idx for idx in range(0, workers)
         ]
 
-        port_pool_size = workers * 2
-        self._udp_pool = [
-            MercurySyncUDPConnection(
-                self.host,
-                self.port + idx,
-                instance_id,
-                env=env
-            ) for instance_id, idx in zip(
-                self.instance_ids,
-                range(0, port_pool_size, 2)
-            )
-        ]
+        if env.MERCURY_SYNC_USE_UDP_MULTICAST:
+            self._udp_pool = [
+                MercurySyncUDPMulticastConnection(
+                    self.host,
+                    self.port,
+                    instance_id,
+                    env=env
+                ) for instance_id in self.instance_ids
+            ]
+
+        else:
+            self._udp_pool = [
+                MercurySyncUDPConnection(
+                    self.host,
+                    self.port,
+                    instance_id,
+                    env=env
+                ) for instance_id in self.instance_ids
+            ]
 
         if env.MERCURY_SYNC_USE_HTTP_SERVER:
 
             self._tcp_pool = [
                 MercurySyncHTTPConnection(
                     self.host,
-                    self.port + idx + 1,
+                    self.port + 1,
                     instance_id,
                     env=env
-                ) for instance_id, idx in zip(
-                    self.instance_ids,
-                    range(0, port_pool_size, 2)
-                )
+                ) for instance_id in self.instance_ids
             ]
 
         else:
-
             self._tcp_pool = [
                 MercurySyncTCPConnection(
                     self.host,
-                    self.port + idx + 1,
+                    self.port + 1,
                     instance_id,
                     env=env
-                ) for instance_id, idx in zip(
-                    self.instance_ids,
-                    range(0, port_pool_size, 2)
-                )
+                ) for instance_id in self.instance_ids
             ]
 
         for service_type, factory in self._plugin_factory.items():
@@ -306,6 +353,7 @@ class Controller(Generic[*P]):
                 path: str = method.path
 
                 for event_http_method in event_http_methods:
+                    event_key = f'{event_http_method}_{path}'
 
                     for param_type in rpc_signature.parameters.values():
                         args = get_args(param_type.annotation)
@@ -313,8 +361,6 @@ class Controller(Generic[*P]):
                         if len(args) > 0 and args[0] in BaseModel.__subclasses__():
 
                             path: str = method.path
-
-                            event_key = f'{event_http_method}_{path}'
 
                             model = args[0]
 
@@ -384,37 +430,36 @@ class Controller(Generic[*P]):
     
     def __getitem__(self, name: str):
         return self._plugins.get(name)
-    
+
     async def run_forever(self):
         loop = asyncio.get_event_loop()
         self._waiter = loop.create_future()
 
         await self._waiter
+
     
     async def use_server_socket(
         self,
-        udp_worker_sockets: List[socket.socket],
-        tcp_worker_sockets: List[socket.socket],
+        udp_worker_socket: socket.socket,
+        tcp_worker_socket: socket.socket,
         cert_path: Optional[str]=None,
         key_path: Optional[str]=None
     ):
         
-        for udp_socket, tcp_socket, udp_connection, tcp_connection in zip(
-            udp_worker_sockets,
-            tcp_worker_sockets,
+        for udp_connection, tcp_connection in zip(
             self._udp_pool,
             self._tcp_pool
         ):
             await udp_connection.connect_async(
                 cert_path=cert_path,
                 key_path=key_path,
-                worker_socket=udp_socket
+                worker_socket=udp_worker_socket
             )
 
             await tcp_connection.connect_async(
                 cert_path=cert_path,
                 key_path=key_path,
-                worker_socket=tcp_socket
+                worker_socket=tcp_worker_socket
             )
 
     async def start_server(
@@ -433,10 +478,24 @@ class Controller(Generic[*P]):
                 mp_context=mp.get_context(method='spawn')
             )
 
-        elif self.engine_type == "thread":
-            engine = ThreadPoolExecutor(max_workers=self._workers)
+        udp_socket = bind_udp_socket(self.host, self.port)
+        tcp_socket = bind_tcp_socket(self.host, self.port + 1)
 
-        if self.engine_type == 'process' or self.engine_type == 'thread':
+        stdin_fileno: Optional[int]
+        try:
+            stdin_fileno = sys.stdin.fileno()
+        except OSError:
+            stdin_fileno = None
+
+        config = {
+            "udp_socket": udp_socket,
+            "tcp_socket": tcp_socket,
+            "stdin_fileno": stdin_fileno,
+            "cert_path": cert_path,
+            "key_path": key_path
+        }
+
+        if self.engine_type == 'process':
 
             for signame in ('SIGINT', 'SIGTERM', 'SIG_IGN'):
                 loop.add_signal_handler(
@@ -458,20 +517,23 @@ class Controller(Generic[*P]):
                         start_pool,
                         udp_connection,
                         tcp_connection,
-                        cert_path=cert_path,
-                        key_path=key_path,
-                        engine_type=self.engine_type
+                        config=config
                     )
                 )
 
                 pool.append(service_worker) 
 
         else:
+
+            offset = 0
+
             for udp_connection, tcp_connection in zip(
                 self._udp_pool,
                 self._tcp_pool
             ):
-                
+                udp_connection.port += offset
+                tcp_connection.port += offset
+
                 pool.append(
                     asyncio.create_task(
                         udp_connection.connect_async(
@@ -490,13 +552,11 @@ class Controller(Generic[*P]):
                     )
                 )
 
+                offset += 2
+
         await asyncio.gather(*pool)
 
         for idx in range(self._workers):
-        
-            udp_socket = self._udp_pool[idx].udp_socket
-            tcp_server_socket = self._tcp_pool[idx].server_socket
-
             for plugin_name in self._plugins:
 
                 plugin: Union[
@@ -508,18 +568,10 @@ class Controller(Generic[*P]):
 
                     await plugin.use_server_socket(
                         udp_socket,
-                        tcp_server_socket,
+                        tcp_socket,
                         cert_path=cert_path,
                         key_path=key_path
                     )
-
-        udp_sockets = [
-            udp_connection.udp_socket for udp_connection in self._udp_pool
-        ]
-
-        tcp_sockets = [
-            tcp_connection.server_socket for tcp_connection in self._tcp_pool
-        ]
 
         for plugin_name in self._plugins:
 
@@ -531,8 +583,8 @@ class Controller(Generic[*P]):
             if isinstance(plugin, Controller):
 
                 await plugin.use_server_socket(
-                    udp_sockets,
-                    tcp_sockets,
+                    udp_socket,
+                    tcp_socket,
                     cert_path=cert_path,
                     key_path=key_path
                 )

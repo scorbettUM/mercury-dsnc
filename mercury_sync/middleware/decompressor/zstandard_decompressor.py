@@ -15,11 +15,10 @@ from typing import (
 )
 
 
-class BidirectionalZStandardCompressor(Middleware):
+class ZStandardDecompressor(Middleware):
 
     def __init__(
         self, 
-        compression_level: int=9,
         serializers: Dict[
             str,
             Callable[
@@ -40,55 +39,13 @@ class BidirectionalZStandardCompressor(Middleware):
     ) -> None:
         super().__init__(
             self.__class__.__name__,
-            middleware_type=MiddlewareType.BIDIRECTIONAL
+            middleware_type=MiddlewareType.UNIDIRECTIONAL_AFTER
         )
 
-        self.compression_level = compression_level
         self.serializers = serializers
-        self._compressor = zstandard.ZstdCompressor()
+        self._decompressor = zstandard.ZstdDecompressor()
 
-    async def __pre__(
-        self,
-        request: Request,
-        response: Union[
-            BaseModel,
-            str,
-            None
-        ],
-        status: int
-    ):
-        try:
-           
-            if request.raw != b'':
-
-                request.content = self._compressor.compress(
-                    request.content
-                )
-
-            return (
-                request,
-                Response(
-                    request.path,
-                    request.method,
-                    headers={
-                        'x-compression-encoding': 'zstd'
-                    }
-                ),
-                200
-            ), True
-
-        except Exception as e:
-            return (
-                None,
-                Response(
-                    request.path,
-                    request.method,
-                    data=str(e)
-                ),
-                500
-            ), False
-        
-    async def __post__(
+    async def __run__(
         self, 
         request: Request,
         response: Union[
@@ -117,7 +74,7 @@ class BidirectionalZStandardCompressor(Middleware):
             
             elif isinstance(response, str):
 
-                compressed_data = self._compressor.compress(
+                decompressed_data = self._decompressor.decompress(
                     response.encode()
                 )
 
@@ -130,31 +87,47 @@ class BidirectionalZStandardCompressor(Middleware):
                             'x-compression-encoding': 'gzip',
                             'content-type': 'text/plain'
                         },
-                        data=b64encode(compressed_data).decode()
+                        data=decompressed_data.decode()
                     ),
                     status
                 ), True
             
             else:
-                serialized = self.serializers[request.path](response)
 
-                compressed_data = self._compressor.compress(
-                    serialized
+                headers = response.headers
+                content_encoding = headers.get(
+                    'content-encoding',
+                    headers.get('x-compression-encoding')
                 )
 
-                response.headers.update({
-                    'x-compression-encoding': 'gzip',
-                    'content-type': 'text/plain'
-                })
+                if content_encoding == 'gzip':
 
+                    headers.pop(
+                        'content-encoding',
+                        headers.pop(
+                            'x-compression-encoding',
+                            None
+                        )
+                    )
+
+                    serialized = self.serializers[request.path](response)
+                    decompressed_data = self._decompressor.decompress(
+                        serialized
+                    )
+
+                    return (
+                        request,
+                        Response(
+                            request.path,
+                            request.method,
+                            headers=headers,
+                            data=decompressed_data.decode()
+                        ),
+                        status
+                    ), True
+                
                 return (
-                    request,
-                    Response(
-                        request.path,
-                        request.method,
-                        headers=response.headers,
-                        data=b64encode(compressed_data).decode()
-                    ),
+                    response,
                     status
                 ), True
             

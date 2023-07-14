@@ -63,12 +63,12 @@ class Limiter:
                 ]
             ]
         ] = {
-            "adaptive": lambda limit: AdaptiveRateLimiter(limit),
-            "cpu-adaptive": lambda limit: CPUAdaptiveLimiter(limit),
-            "leaky-bucket": lambda limit: LeakyBucketLimiter(limit),
-            "rate-adaptive": lambda limit: ResourceAdaptiveLimiter(limit),
-            "sliding-window":  lambda limit: SlidingWindowLimiter(limit),
-            "token-bucket":  lambda limit: TokenBucketLimiter(limit),
+            "adaptive": AdaptiveRateLimiter,
+            "cpu-adaptive": CPUAdaptiveLimiter,
+            "leaky-bucket": LeakyBucketLimiter,
+            "rate-adaptive": ResourceAdaptiveLimiter,
+            "sliding-window":  SlidingWindowLimiter,
+            "token-bucket":  TokenBucketLimiter,
         }
 
         self._rate_limit_period = env.MERCURY_SYNC_HTTP_RATE_LIMIT_PERIOD

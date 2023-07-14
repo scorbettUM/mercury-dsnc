@@ -45,6 +45,7 @@ class Env(BaseModel):
     MERCURY_SYNC_USE_HTTP_MSYNC_ENCRYPTION: StrictBool=False
     MERCURY_SYNC_USE_HTTP_SERVER: StrictBool=False
     MERCURY_SYNC_USE_HTTP_AND_TCP_SERVERS: StrictBool=False
+    MERCURY_SYNC_USE_UDP_MULTICAST: StrictBool=False
     MERCURY_SYNC_TCP_CONNECT_RETRIES: StrictInt=3
     MERCURY_SYNC_CLEANUP_INTERVAL: StrictStr='10s'
     MERCURY_SYNC_MAX_CONCURRENCY: StrictInt=2048
@@ -54,6 +55,7 @@ class Env(BaseModel):
     @classmethod
     def types_map(self) -> Dict[str, Callable[[str], PrimaryType]]:
         return {
+            'MERCURY_SYNC_USE_UDP_MULTICAST': lambda value: True if value.lower() == 'true' else False,
             'MERCURY_SYNC_HTTP_CORS_ENABLED': lambda value: True if value.lower() == 'true' else False,
             'MERCURY_SYNC_HTTP_MEMORY_LIMIT': str,
             'MERCURY_SYNC_HTTP_RATE_LIMIT_BACKOFF_RATE': int,
