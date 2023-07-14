@@ -466,8 +466,6 @@ class MercurySyncHTTPConnection(MercurySyncTCPConnection):
 
         except Exception:
 
-            print(traceback.format_exc())
-
             async with self._backoff_sem:
                 if transport.is_closing() is False:
 
