@@ -54,7 +54,6 @@ class CPUAdaptiveLimiter(BaseLimiter):
         self._current_time = self._loop.time()
         self._previous_count = limit.max_requests
 
-
         self._history: List[float] = []
 
         self._max_queue = limit.max_requests

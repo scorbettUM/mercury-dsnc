@@ -1,2 +1,14 @@
+from typing import Callable, Coroutine, Any
+
+
 class BaseWrapper:
-    pass
+    
+    def __init__(self) -> None:
+        self.setup: Callable[
+            [],
+            Coroutine[
+                Any,
+                Any,
+                None
+            ]
+        ] = None

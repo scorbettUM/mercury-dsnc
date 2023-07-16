@@ -1,4 +1,7 @@
+
+import traceback
 from mercury_sync.models.request import Request
+from mercury_sync.models.response import Response
 from pydantic import BaseModel
 from typing import (
     Callable, 
@@ -13,6 +16,7 @@ from .base_wrapper import BaseWrapper
 from .types import MiddlewareType
 from .types import (
     Handler,
+    CallHandler,
     BidirectionalMiddlewareHandler
 )
 
@@ -20,13 +24,13 @@ from .types import (
 T = TypeVar('T')
 
 
-class BidirectionalWrapper(BaseWrapper):
+class CallWrapper(BaseWrapper):
 
     def __init__(
         self,
         name: str,
         handler: Handler,
-        middleware_type: MiddlewareType=MiddlewareType.BIDIRECTIONAL,
+        middleware_type: MiddlewareType=MiddlewareType.CALL,
         methods: Optional[
             List[
                 Literal[
@@ -102,8 +106,7 @@ class BidirectionalWrapper(BaseWrapper):
         if self.handler.response_headers and self.response_headers:
             self.handler.response_headers = {}
 
-        self.pre: Optional[BidirectionalMiddlewareHandler] = None
-        self.post: Optional[BidirectionalMiddlewareHandler] = None
+        self.run: Optional[CallHandler] = None
 
         self.middleware_type = middleware_type
 
@@ -112,30 +115,9 @@ class BidirectionalWrapper(BaseWrapper):
         request: Request
     ):
 
-        (request, response, middleware_status), run_next = await self.pre(
+        (request, response, status) = await self.run( 
             request,
-            None,
-            None
+            self.handler
         )
 
-        if run_next is False:
-            return response, middleware_status
-        
-        if self.wraps:
-            result, status = await self.handler(request)
-            result.headers.update(response.headers)
-
-        else:
-            result, status = await self.handler(request)
-            
-
-        (request, response, middleware_status), run_next = await self.post(
-            request,
-            result,
-            status
-        )
-
-        if run_next is False:
-            return response, middleware_status
-        
         return response, status

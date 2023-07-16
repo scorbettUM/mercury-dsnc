@@ -467,6 +467,9 @@ class Controller(Generic[*P]):
       cert_path: Optional[str]=None,
       key_path: Optional[str]=None      
     ):
+        
+        for middleware in self.middleware:
+            await middleware.__setup__()
 
         pool: List[asyncio.Future] = []
 

@@ -13,6 +13,7 @@ from typing import (
     Tuple
 )
 from .bidirectional_wrapper import BidirectionalWrapper
+from .call_wrapper import CallWrapper
 from .unidirectional_wrapper import UnidirectionalWrapper
 from .types import MiddlewareType
 
@@ -44,9 +45,11 @@ class Middleware:
         self.methods = methods
         self.response_headers = response_headers
         self.middleware_type = middleware_type
+        self.wraps = False
 
         self._wrapper_types = {
             MiddlewareType.BIDIRECTIONAL: BidirectionalWrapper,
+            MiddlewareType.CALL: CallWrapper,
             MiddlewareType.UNIDIRECTIONAL_BEFORE: UnidirectionalWrapper,
             MiddlewareType.UNIDIRECTIONAL_AFTER: UnidirectionalWrapper,
         }
@@ -90,13 +93,19 @@ class Middleware:
             wrapper.pre = self.__pre__
             wrapper.post = self.__post__
 
-        elif isinstance(wrapper, UnidirectionalWrapper):
+        elif isinstance(wrapper, (CallWrapper, UnidirectionalWrapper)):
 
             wrapper.run = self.__run__
         
             self.response_headers.update(wrapper.response_headers)
+
+        wrapper.setup = self.__setup__
+        self.wraps = wrapper.wraps
         
         return wrapper
+    
+    async def __setup__(self):
+        pass
     
     async def __pre__(
         self, 

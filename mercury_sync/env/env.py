@@ -18,6 +18,10 @@ PrimaryType = Union[str, int, float, bytes, bool]
 
 
 class Env(BaseModel):
+    MERCURY_SYNC_HTTP_CIRCUIT_BREAKER_REJECTION_SENSITIVITY: StrictFloat=0.1
+    MERCURY_SYNC_HTTP_CIRCUIT_BREAKER_FAILURE_WINDOW: StrictStr='1m'
+    MERCURY_SYNC_HTTP_CIRCUIT_BREAKER_FAILURE_THRESHOLD: Union[StrictInt, StrictFloat]=0.2
+    MERCURY_SYNC_HTTP_HANDLER_TIMEOUT: StrictStr='1m'
     MERCURY_SYNC_HTTP_RATE_LIMIT_STRATEGY: Literal[
         "none", 
         "global", 
@@ -55,7 +59,11 @@ class Env(BaseModel):
     @classmethod
     def types_map(self) -> Dict[str, Callable[[str], PrimaryType]]:
         return {
+            'MERCURY_SYNC_HTTP_CIRCUIT_BREAKER_REJECTION_SENSITIVITY': float,
+            'MERCURY_SYNC_HTTP_CIRCUIT_BREAKER_FAILURE_WINDOW': str,
+            'MERCURY_SYNC_HTTP_HANDLER_TIMEOUT': str,
             'MERCURY_SYNC_USE_UDP_MULTICAST': lambda value: True if value.lower() == 'true' else False,
+            'MERCURY_SYNC_HTTP_CIRCUIT_BREAKER_FAILURE_THRESHOLD': float,
             'MERCURY_SYNC_HTTP_CORS_ENABLED': lambda value: True if value.lower() == 'true' else False,
             'MERCURY_SYNC_HTTP_MEMORY_LIMIT': str,
             'MERCURY_SYNC_HTTP_RATE_LIMIT_BACKOFF_RATE': int,

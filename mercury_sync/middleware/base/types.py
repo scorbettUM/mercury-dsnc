@@ -13,6 +13,7 @@ from typing import (
 
 class MiddlewareType(Enum):
     BIDIRECTIONAL='BIDIRECTIONAL'
+    CALL='CALL'
     UNIDIRECTIONAL_BEFORE='UNIDIRECTIONAL_BEFORE'
     UNIDIRECTIONAL_AFTER='UNIDIRECTIONAL_AFTER'
 
@@ -50,6 +51,22 @@ WrappedHandler = Callable[
     ]
 ]
 
+CallHandler = Callable[
+    [
+        Request,
+        RequestHandler
+    ],
+    Coroutine[
+        Any, 
+        Any, 
+        Tuple[
+            Request,
+            Response, 
+            int
+        ]
+    ]
+]
+
 MiddlewareHandler = Callable[
     [
         Request,
@@ -65,6 +82,7 @@ MiddlewareHandler = Callable[
         ]
     ]
 ]
+
 
 
 BidirectionalMiddlewareHandler = Callable[
