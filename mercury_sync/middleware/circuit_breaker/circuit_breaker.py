@@ -1,6 +1,7 @@
 import math
 import asyncio
 import random
+import traceback
 from collections import deque
 from mercury_sync.env import Env, load_env
 from mercury_sync.env.time_parser import TimeParser
@@ -65,9 +66,13 @@ class CircuitBreaker(Middleware):
         self.failed = 0
         self.succeeded = 0
         self.total_completed = 0
+
         self._rate_per_sec = 0
+        self._rate_per_sec_succeeded = 0
         self._rate_per_sec_failed = 0
+
         self._previous_count = 0
+        self._previous_count_succeeded = 0
         self._previous_count_failed = 0
 
         self.wraps: bool = False
@@ -86,12 +91,22 @@ class CircuitBreaker(Middleware):
 
     def trip_breaker(self) -> bool:
 
+        failed_rate_threshold = max(
+            self._rate_per_sec * self.failure_threshold,
+            1
+        )
+
+        return int(self._rate_per_sec_failed) > int(failed_rate_threshold)
+    
+    def reject_request(self) -> bool:
+
         if (self._loop.time() - self._current_time) > self.failure_window:
             self._current_time = math.floor(
                 self._loop.time()/self.failure_window
             ) * self.failure_window
 
             self._previous_count = self.total_completed
+            self._previous_count_succeeded = self.succeeded
             self._previous_count_failed = self.failed
 
             self.failed = 0
@@ -104,29 +119,28 @@ class CircuitBreaker(Middleware):
             )/self.failure_window
         ) + self.total_completed
 
+
+        self._rate_per_sec_succeeded = (
+            self._previous_count_succeeded * (
+                self.failure_window - (self._loop.time() - self._current_time)
+            )/self.failure_window
+        ) + self.succeeded
+
         self._rate_per_sec_failed = (
             self._previous_count_failed * (
                 self.failure_window - (self._loop.time() - self._current_time)
             )/self.failure_window
         ) + self.failed
 
-        failed_rate_threshold = max(
-            self._rate_per_sec * self.failure_threshold,
-            1
-        )
+        success_rate = self._rate_per_sec_succeeded/(1 - self.failure_threshold)
 
-        return int(self._rate_per_sec_failed) > int(failed_rate_threshold)
-    
-    def reject_request(self) -> float:
-
-        success_rate = self.succeeded/self.failure_threshold
-
-        rejection_probability = (
-            (self.total_completed - success_rate)/(self.total_completed + 1)
+        rejection_probability = max(
+            (self._rate_per_sec - success_rate)/(self._rate_per_sec + 1),
+            0
         )**(1/self.rejection_sensitivity)
+        
+        return random.random() < rejection_probability
 
-        return random.random() <= rejection_probability
-    
     async def __setup__(self):
         self._loop = asyncio.get_event_loop()
         self._current_time = self._loop.time()
@@ -137,7 +151,7 @@ class CircuitBreaker(Middleware):
         handler: RequestHandler
     ):
         
-        reject = False
+        reject = self.reject_request()
 
         if self._breaker_state == CircuitBreakerState.OPEN and self._closed_elapsed < self.failure_window:
             self._closed_elapsed = self._loop.time() - self._closed_window_start
@@ -152,13 +166,23 @@ class CircuitBreaker(Middleware):
 
         if self._breaker_state == CircuitBreakerState.HALF_OPEN and self._half_open_elapsed < self.failure_window:
             self._half_open_elapsed = self._loop.time() - self._half_open_window_start
-            reject = self.reject_request()
 
         elif self._breaker_state == CircuitBreakerState.HALF_OPEN:
             self._breaker_state = CircuitBreakerState.CLOSED
             self._half_open_elapsed = 0
+
+        if reject:
+            response = Response(
+                request.path,
+                request.method,
+                headers={
+                    'x-mercury-sync-overload': True
+                }
+            )
+
+            status = 503
         
-        if reject is False:
+        else:
 
             try:
 
@@ -185,27 +209,17 @@ class CircuitBreaker(Middleware):
                 )
 
                 status = 504
+            
+            # Don't count rejections toward failure stats.
+            if status >= 400:
+                self.failed += 1
 
-        else:
-            response = Response(
-                request.path,
-                request.method,
-                headers={
-                    'x-mercury-sync-overload': True
-                }
-            )
+            elif status < 400:
+                self.succeeded += 1
+            
+            self.total_completed += 1
 
-            status = 503
-        
         breaker_open = self._breaker_state == CircuitBreakerState.CLOSED or self._breaker_state == CircuitBreakerState.HALF_OPEN
-        
-        if status >= 400 and breaker_open:
-            self.failed += 1
-
-        elif breaker_open:
-            self.succeeded += 1
-     
-        self.total_completed += 1
 
         if self.trip_breaker() and breaker_open:
 
